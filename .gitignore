@@ -3,14 +3,51 @@ dist/
 .turbo/
 *.tsbuildinfo
 .DS_Store
-.env
-.env.local
+Thumbs.db
 
-# Per JamJet repo policy
+# Env / secrets — be aggressive; this is a public repo
+.env
+.env.*
+*.env
+.npmrc
+*.key
+*.pem
+*.p12
+*.token
+secrets/
+credentials.json
+
+# Claude / skill scratch — never commit (any depth, any path)
 .claude/
+**/.claude/
 .superpowers/
+**/.superpowers/
 docs/superpowers/
+**/docs/superpowers/
 CLAUDE.md
+**/CLAUDE.md
 progress-tracker.md
+**/progress-tracker.md
 REQUIREMENTS.md
+**/REQUIREMENTS.md
 .worktrees/
+**/.worktrees/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.history/
+
+# Test / coverage / logs
+coverage/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS metadata
+.AppleDouble
+.LSOverride
