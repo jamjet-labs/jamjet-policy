@@ -1,0 +1,34 @@
+{
+  "name": "@jamjet/mcp-shim",
+  "version": "0.1.0",
+  "description": "JamJet policy + audit + approval as an MCP stdio interceptor. Drop-in between any MCP client and any MCP server.",
+  "type": "module",
+  "bin": {
+    "jamjet-mcp-shim": "./dist/bin.js"
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsup src/bin.ts --format esm --dts --shims --clean",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "conformance": "vitest run conformance"
+  },
+  "dependencies": {
+    "@jamjet/cloud": "^0.3.0",
+    "yaml": "^2.5.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "tsup": "^8.0.0",
+    "vitest": "^2.0.0",
+    "@types/node": "^20.0.0"
+  },
+  "keywords": ["ai-agents", "agent-safety", "mcp", "model-context-protocol", "claude-desktop", "cursor", "ai-governance"],
+  "license": "Apache-2.0",
+  "publishConfig": { "access": "public" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jamjet-labs/jamjet-policy.git",
+    "directory": "packages/mcp-shim"
+  }
+}
