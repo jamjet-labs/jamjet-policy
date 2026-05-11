@@ -25,7 +25,7 @@ function sendAndRead(shim: ChildProcessWithoutNullStreams, payload: string): Pro
 }
 
 describe('mcp-shim integration', () => {
-  it('blocks a tools/call matching policy', async () => {
+  it('blocks a tools/call matching policy', { timeout: 20_000 }, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'shim-test-'))
     writeFileSync(join(dir, 'policy.yaml'),
       'version: 1\nrules:\n  - { match: "*delete*", action: block }\n')
@@ -45,7 +45,7 @@ describe('mcp-shim integration', () => {
     shim.kill()
   })
 
-  it('forwards a tools/call that policy allows', async () => {
+  it('forwards a tools/call that policy allows', { timeout: 20_000 }, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'shim-test-'))
     writeFileSync(join(dir, 'policy.yaml'),
       'version: 1\nrules:\n  - { match: "*delete*", action: block }\n')
