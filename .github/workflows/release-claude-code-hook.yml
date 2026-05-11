@@ -41,9 +41,11 @@ jobs:
       - name: Build
         run: pnpm build
 
-      - name: Publish to npm with provenance
-        # Use npx to fetch a fresh npm >= 11.5.1 (trusted-publisher OIDC support)
-        # without overwriting the system npm bundled with Node 22.
-        run: npx npm@latest publish --provenance --access public
+      - name: Publish to npm
+        # NOTE: `--provenance` requires a PUBLIC GitHub repo (sigstore attestation
+        # signs the repo URL). jamjet-policy is private during Phase 2 dev;
+        # add --provenance back when the repo flips public at launch.
+        # Use npx to fetch a fresh npm without overwriting the system bundle.
+        run: npx npm@latest publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
