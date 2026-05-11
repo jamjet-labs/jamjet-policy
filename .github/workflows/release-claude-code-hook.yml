@@ -1,0 +1,49 @@
+name: Release @jamjet/claude-code-hook
+
+on:
+  push:
+    tags:
+      - 'claude-code-hook-v*'
+
+jobs:
+  publish:
+    name: Publish @jamjet/claude-code-hook
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    defaults:
+      run:
+        working-directory: packages/claude-code-hook
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install
+        run: cd ../.. && pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Publish to npm with provenance
+        # Use npx to fetch a fresh npm >= 11.5.1 (trusted-publisher OIDC support)
+        # without overwriting the system npm bundled with Node 22.
+        run: npx npm@latest publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
