@@ -1,0 +1,32 @@
+{
+  "name": "@jamjet/cli",
+  "version": "0.1.0",
+  "description": "JamJet CLI — unified audit show + approve across every JamJet adapter.",
+  "type": "module",
+  "bin": {
+    "jamjet": "./dist/index.js"
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --shims --clean",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@jamjet/cloud": "^0.3.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "tsup": "^8.0.0",
+    "vitest": "^2.0.0",
+    "@types/node": "^20.0.0"
+  },
+  "keywords": ["ai-agents", "agent-safety", "cli", "ai-governance"],
+  "license": "Apache-2.0",
+  "publishConfig": { "access": "public" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jamjet-labs/jamjet-policy.git",
+    "directory": "packages/cli"
+  }
+}
