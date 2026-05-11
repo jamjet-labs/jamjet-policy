@@ -35,11 +35,12 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Test
-        run: pnpm test
-
+      # Build BEFORE Test — integration tests spawn `dist/bin.js`.
       - name: Build
         run: pnpm build
+
+      - name: Test
+        run: pnpm test
 
       - name: Publish to npm with provenance
         # --provenance works because jamjet-policy is now public.
