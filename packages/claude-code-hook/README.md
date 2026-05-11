@@ -1,0 +1,1 @@
+# @jamjet/claude-code-hook
