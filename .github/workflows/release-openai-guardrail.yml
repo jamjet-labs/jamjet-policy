@@ -1,0 +1,49 @@
+name: Release @jamjet/openai-guardrail
+
+on:
+  push:
+    tags:
+      - 'openai-guardrail-v*'
+
+jobs:
+  publish:
+    name: Publish @jamjet/openai-guardrail
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    defaults:
+      run:
+        working-directory: packages/openai-guardrail
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm/action-setup with no `version:` reads "packageManager" from the
+      # root package.json. Avoids ERR_PNPM_BAD_PM_VERSION.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install
+        run: cd ../.. && pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # Build BEFORE Test — guardrail tests don't spawn dist/ today, but
+      # keep the order consistent across all adapter release workflows.
+      - name: Build
+        run: pnpm build
+
+      - name: Test
+        run: pnpm test
+
+      - name: Publish to npm with provenance
+        run: npx npm@latest publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
