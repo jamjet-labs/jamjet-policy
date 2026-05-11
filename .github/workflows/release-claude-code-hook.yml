@@ -41,11 +41,10 @@ jobs:
       - name: Build
         run: pnpm build
 
-      - name: Publish to npm
-        # NOTE: `--provenance` requires a PUBLIC GitHub repo (sigstore attestation
-        # signs the repo URL). jamjet-policy is private during Phase 2 dev;
-        # add --provenance back when the repo flips public at launch.
+      - name: Publish to npm with provenance
         # Use npx to fetch a fresh npm without overwriting the system bundle.
-        run: npx npm@latest publish --access public
+        # --provenance requires a public GitHub repo (sigstore signs the
+        # source URL); jamjet-policy is public, so this works.
+        run: npx npm@latest publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
