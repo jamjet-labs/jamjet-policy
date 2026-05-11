@@ -1,0 +1,14 @@
+version: 1
+
+rules:
+  - { match: "*delete*",                  action: block }
+  - { match: "*drop*",                    action: block }
+  - { match: "shell.exec",                action: block }
+  - { match: "filesystem.write",          action: require_approval }
+  - { match: "payments.*",                action: require_approval }
+  - { match: "github.merge_pull_request", action: require_approval }
+  - { match: "slack.send_message",        action: audit }
+
+audit:
+  destination: ~/.jamjet/audit
+  rotate_daily: true
