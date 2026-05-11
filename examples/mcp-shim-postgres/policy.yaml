@@ -1,0 +1,14 @@
+version: 1
+
+rules:
+  - { match: "database.delete_*",        action: block }
+  - { match: "database.drop_*",          action: block }
+  - { match: "database.truncate_*",      action: block }
+  - { match: "database.update_*",        action: require_approval }
+  - { match: "database.insert_*",        action: require_approval }
+  - { match: "database.read_*",          action: allow }
+  - { match: "database.list_*",          action: allow }
+
+audit:
+  destination: ~/.jamjet/audit
+  rotate_daily: true
