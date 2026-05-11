@@ -18,9 +18,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # pnpm/action-setup with no `version:` reads "packageManager" from
+      # the root package.json (pnpm@9.0.0). Avoids ERR_PNPM_BAD_PM_VERSION.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         with:
