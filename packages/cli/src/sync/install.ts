@@ -35,9 +35,12 @@ export interface InstallResult {
 export async function syncInstall(opts: InstallOptions = {}): Promise<InstallResult> {
   const home = opts.homeDir ?? homedir()
   const node = opts.nodeBin ?? process.execPath
-  const entry = opts.cliEntry ?? process.argv[1]
+  const entry = opts.cliEntry ?? process.argv[1] ?? ''
   const plat = opts.forcePlatform ?? platform()
   const out = opts.stdout ?? ((s) => process.stdout.write(s))
+  if (!entry) {
+    throw new Error('cliEntry is required when process.argv[1] is unavailable')
+  }
 
   let result: InstallResult
   if (plat === 'darwin') {

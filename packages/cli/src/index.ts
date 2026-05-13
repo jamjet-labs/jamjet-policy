@@ -1,8 +1,14 @@
 #!/usr/bin/env node
 import { auditShow } from './audit-show.js'
 import { approveRunId } from './approve.js'
+import { cloudLink } from './cloud/link.js'
+import { loadConfig } from './cloud/config.js'
+import { Daemon } from './sync/daemon.js'
+import { syncStatus } from './sync/status.js'
+import { syncVerify } from './sync/verify.js'
+import { syncInstall } from './sync/install.js'
 
-const VERSION = '0.1.0'
+const VERSION = '0.2.0'
 
 function printHelp(): void {
   process.stdout.write(`jamjet — JamJet CLI (v${VERSION})
@@ -11,13 +17,19 @@ Usage:
   jamjet audit show [--date YYYY-MM-DD] [--adapter <name>]
   jamjet approve <run-id>
   jamjet reject  <run-id>
+
+Cloud Sync:
+  jamjet cloud link [--api-base URL]
+  jamjet cloud whoami
+  jamjet sync start
+  jamjet sync install
+  jamjet sync status [--json]
+  jamjet sync verify <YYYY-MM-DD>
+  jamjet sync stop
+
+Misc:
   jamjet --version
   jamjet --help
-
-Examples:
-  jamjet audit show
-  jamjet audit show --adapter claude-code-hook
-  jamjet approve run_a1b2c3
 `)
 }
 
@@ -27,42 +39,124 @@ function getFlag(args: string[], name: string): string | undefined {
   return args[i + 1]
 }
 
+function hasFlag(args: string[], name: string): boolean {
+  return args.includes(name)
+}
+
 const argv = process.argv.slice(2)
-const sub = argv[0]
 
-if (!sub || sub === '--help' || sub === '-h') {
+async function main(): Promise<void> {
+  if (hasFlag(argv, '--version') || hasFlag(argv, '-V') || argv[0] === '--version') {
+    process.stdout.write(`${VERSION}\n`)
+    return
+  }
+  if (hasFlag(argv, '--help') || hasFlag(argv, '-h') || argv.length === 0) {
+    printHelp()
+    return
+  }
+
+  const [cmd, sub, ...rest] = argv
+
+  if (cmd === 'audit' && sub === 'show') {
+    auditShow({
+      date: getFlag(rest, '--date'),
+      adapter: getFlag(rest, '--adapter'),
+    })
+    return
+  }
+
+  if (cmd === 'approve' || cmd === 'reject') {
+    if (!sub) {
+      process.stderr.write(`Usage: jamjet ${cmd} <run-id>\n`)
+      process.exitCode = 64
+      return
+    }
+    const ok = approveRunId({ runId: sub, action: cmd })
+    process.exitCode = ok ? 0 : 1
+    return
+  }
+
+  if (cmd === 'cloud' && sub === 'link') {
+    await cloudLink({ apiBase: getFlag(rest, '--api-base') })
+    return
+  }
+
+  if (cmd === 'cloud' && sub === 'whoami') {
+    try {
+      const cfg = loadConfig()
+      process.stdout.write(
+        `project: ${cfg.cloud.project_id}\n` +
+          `key ends with: ...${cfg.cloud.api_key.slice(-4)}\n` +
+          `api base: ${cfg.cloud.api_base}\n`,
+      )
+    } catch (e) {
+      process.stderr.write(`${(e as Error).message}\n`)
+      process.exitCode = 1
+    }
+    return
+  }
+
+  if (cmd === 'sync' && sub === 'start') {
+    const cfg = loadConfig()
+    const daemon = new Daemon({ config: cfg })
+    await daemon.start()
+    process.stderr.write(`[jamjet-sync] daemon started (pid ${process.pid})\n`)
+    // Block forever; signal handlers in lock.ts handle SIGTERM/SIGINT.
+    await new Promise<void>(() => {})
+    return
+  }
+
+  if (cmd === 'sync' && sub === 'install') {
+    await syncInstall()
+    return
+  }
+
+  if (cmd === 'sync' && sub === 'status') {
+    await syncStatus({ json: hasFlag(rest, '--json') })
+    return
+  }
+
+  if (cmd === 'sync' && sub === 'verify') {
+    const date = rest[0]
+    if (!date) {
+      process.stderr.write('sync verify: missing YYYY-MM-DD\n')
+      process.exitCode = 64
+      return
+    }
+    const result = await syncVerify({ date })
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n')
+    return
+  }
+
+  if (cmd === 'sync' && sub === 'stop') {
+    const { existsSync, readFileSync } = await import('node:fs')
+    const { homedir } = await import('node:os')
+    const { join } = await import('node:path')
+    const lockPath = join(homedir(), '.jamjet', 'sync', 'daemon.pid')
+    if (!existsSync(lockPath)) {
+      process.stdout.write('daemon not running\n')
+      return
+    }
+    const info = JSON.parse(readFileSync(lockPath, 'utf-8')) as { pid: number }
+    try {
+      process.kill(info.pid, 'SIGTERM')
+    } catch (e) {
+      process.stderr.write(
+        `failed to signal pid ${info.pid}: ${(e as Error).message}\n`,
+      )
+      process.exitCode = 1
+      return
+    }
+    process.stdout.write(`sent SIGTERM to pid ${info.pid}\n`)
+    return
+  }
+
+  process.stderr.write(`unknown command: ${argv.join(' ')}\n`)
   printHelp()
-  process.exit(0)
+  process.exitCode = 64
 }
 
-if (sub === '--version' || sub === '-v') {
-  process.stdout.write(`${VERSION}\n`)
-  process.exit(0)
-}
-
-if (sub === 'audit') {
-  if (argv[1] !== 'show') {
-    process.stderr.write(`Unknown audit subcommand: ${argv[1] ?? ''}\n`)
-    process.exit(64)
-  }
-  const rest = argv.slice(2)
-  auditShow({
-    date: getFlag(rest, '--date'),
-    adapter: getFlag(rest, '--adapter'),
-  })
-  process.exit(0)
-}
-
-if (sub === 'approve' || sub === 'reject') {
-  const runId = argv[1]
-  if (!runId) {
-    process.stderr.write(`Usage: jamjet ${sub} <run-id>\n`)
-    process.exit(64)
-  }
-  const ok = approveRunId({ runId, action: sub })
-  process.exit(ok ? 0 : 1)
-}
-
-process.stderr.write(`Unknown command: ${sub}\n`)
-printHelp()
-process.exit(64)
+main().catch((e) => {
+  process.stderr.write(`error: ${(e as Error).message ?? e}\n`)
+  process.exitCode = 1
+})
