@@ -25,8 +25,8 @@ importers:
   packages/claude-code-hook:
     dependencies:
       '@jamjet/cloud':
-        specifier: ^0.3.0
-        version: 0.3.0
+        specifier: ^0.3.1
+        version: 0.3.1
       yaml:
         specifier: ^2.5.0
         version: 2.9.0

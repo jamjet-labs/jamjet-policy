@@ -1,6 +1,6 @@
 {
   "name": "@jamjet/claude-code-hook",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "JamJet policy + audit + approval as a Claude Code PreToolUse hook. One policy file, every Claude Code session.",
   "type": "module",
   "bin": {
@@ -14,7 +14,7 @@
     "conformance": "vitest run conformance"
   },
   "dependencies": {
-    "@jamjet/cloud": "^0.3.0",
+    "@jamjet/cloud": "^0.3.1",
     "yaml": "^2.5.0"
   },
   "devDependencies": {
