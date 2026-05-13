@@ -174,6 +174,37 @@ describe('Drainer', () => {
     cleanup()
   })
 
+  it('quarantines corrupt outbox rows instead of stalling the queue', async () => {
+    const { outbox, cleanup } = mkOutbox()
+    // Two corrupt rows + one good row.
+    outbox.insert('{not json', '2026-05-12T00:00:00.000Z')
+    outbox.insert('also not json {', '2026-05-12T00:00:01.000Z')
+    outbox.insert(fakeEvent('run_ok'), '2026-05-12T00:00:02.000Z')
+
+    const client = {
+      postEvents: vi.fn().mockResolvedValue({
+        accepted: 1,
+        rejected: 0,
+        duplicates: 0,
+        errors: [],
+      }),
+    } as unknown as CloudClient
+    const drainer = new Drainer({ outbox, client, batchSize: 100 })
+    let dropEvent: { count: number; status: number } | undefined
+    drainer.on('drop', (e) => {
+      dropEvent = e
+    })
+    await drainer.tick()
+
+    // Corrupt rows dropped, good one pushed, outbox empty.
+    expect(outbox.depth()).toBe(0)
+    expect(drainer.total4xx).toBe(2)
+    expect(dropEvent).toEqual({ count: 2, status: 0 })
+    expect(drainer.totalPushed).toBe(1)
+    expect((client.postEvents as ReturnType<typeof vi.fn>).mock.calls[0][0]).toHaveLength(1)
+    cleanup()
+  })
+
   it('counts duplicates toward totalPushed (server-side dedup)', async () => {
     const { outbox, cleanup } = mkOutbox()
     outbox.insert(fakeEvent('run_1'), '2026-05-12T00:00:00.000Z')

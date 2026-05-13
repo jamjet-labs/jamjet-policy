@@ -47,11 +47,31 @@ export class Drainer extends EventEmitter {
     const rows = this.opts.outbox.dueRows(this.opts.batchSize)
     if (rows.length === 0) return
 
-    const events: AuditEventV1[] = rows.map((r) => JSON.parse(r.event_json))
+    // Parse each row defensively. A corrupt event_json blob would otherwise
+    // throw synchronously OUTSIDE the try/catch below and the same poison row
+    // would block every subsequent tick. Quarantine corrupt rows by acking
+    // (treating them like a PermanentError-drop) and continue.
+    const events: AuditEventV1[] = []
+    const corruptIds: number[] = []
+    const goodIds: number[] = []
+    for (const r of rows) {
+      try {
+        events.push(JSON.parse(r.event_json))
+        goodIds.push(r.id)
+      } catch {
+        corruptIds.push(r.id)
+      }
+    }
+    if (corruptIds.length > 0) {
+      this.opts.outbox.ack(corruptIds)
+      this.total4xx += corruptIds.length
+      this.emit('drop', { count: corruptIds.length, status: 0 })
+    }
+    if (events.length === 0) return
 
     try {
       const resp = await this.opts.client.postEvents(events)
-      this.opts.outbox.ack(rows.map((r) => r.id))
+      this.opts.outbox.ack(goodIds)
       this.totalPushed += resp.accepted + resp.duplicates
       this.lastSuccessAt = new Date().toISOString()
       const maxTs = events.map((e) => e.ts).sort().at(-1)
@@ -63,16 +83,16 @@ export class Drainer extends EventEmitter {
         return
       }
       if (e instanceof PermanentError) {
-        this.opts.outbox.ack(rows.map((r) => r.id))
+        this.opts.outbox.ack(goodIds)
         this.total4xx++
-        this.emit('drop', { count: rows.length, status: e.status })
+        this.emit('drop', { count: goodIds.length, status: e.status })
         return
       }
       // TransientError + unknown errors (network drops, DNS, etc.) → retry
       // with backoff. We deliberately do not emit 'error' for unknown errors
       // because EventEmitter throws when 'error' has no listener — that would
       // crash the daemon on a transient blip.
-      this.opts.outbox.bumpRetry(rows.map((r) => r.id))
+      this.opts.outbox.bumpRetry(goodIds)
       this.total5xx++
       if (!(e instanceof TransientError)) {
         this.emit('unexpected', e)
