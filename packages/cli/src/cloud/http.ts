@@ -80,7 +80,11 @@ export class CloudClient {
     if (statusCode >= 400) {
       throw new PermanentError(`HTTP ${statusCode}: ${text}`, statusCode)
     }
-    return JSON.parse(text) as IngestResponse
+    try {
+      return JSON.parse(text) as IngestResponse
+    } catch {
+      throw new TransientError(`200 OK but body is not valid JSON: ${text.slice(0, 200)}`)
+    }
   }
 
   async approvalsPending(runIds: string[]): Promise<ApprovalDecision[]> {
@@ -103,6 +107,10 @@ export class CloudClient {
     if (statusCode >= 400) {
       throw new PermanentError(`HTTP ${statusCode}: ${text}`, statusCode)
     }
-    return JSON.parse(text) as ApprovalDecision[]
+    try {
+      return JSON.parse(text) as ApprovalDecision[]
+    } catch {
+      throw new TransientError(`200 OK but body is not valid JSON: ${text.slice(0, 200)}`)
+    }
   }
 }

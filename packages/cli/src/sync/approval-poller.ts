@@ -77,6 +77,7 @@ export class ApprovalPoller extends EventEmitter {
         continue
       }
 
+      if (typeof decision.status !== 'string') continue
       const status = decision.status.toLowerCase()
       if (status !== 'approved' && status !== 'rejected') continue
 

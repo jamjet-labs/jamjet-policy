@@ -89,7 +89,14 @@ export class Tailer extends EventEmitter {
     } catch {
       return
     }
-    if (size <= lastPos) return
+    // File shrank (logrotate truncated or file replaced) — reset offset so
+    // the next handleFile reads from the start of the new content. Without
+    // this guard the tailer can stall on a rotated file indefinitely.
+    if (size < lastPos) {
+      this.filePositions.set(path, 0)
+      return this.readSince(path)
+    }
+    if (size === lastPos) return
 
     // Bound the read explicitly so writes that land after we snapshot size
     // are deferred to the next watcher event (which will fire on 'change').

@@ -188,6 +188,33 @@ describe('Tailer', () => {
     await tailer.stop()
   })
 
+  it('resets position when a watched file shrinks (logrotate truncate)', async () => {
+    const tailer = new Tailer({ auditDir, todayDir: today, filter: 'all' })
+    const events: AuditEventV1[] = []
+    tailer.on('event', (e) => events.push(e))
+    await tailer.start()
+
+    const file = join(auditDir, today, 'rotated.jsonl')
+    // Write three events first so the file is comfortably > one event large.
+    appendFileSync(
+      file,
+      VALID('run_one', 'BLOCKED') + '\n' +
+        VALID('run_two', 'BLOCKED') + '\n' +
+        VALID('run_three', 'BLOCKED') + '\n',
+    )
+    await wait()
+    expect(events.map((e) => e.run_id)).toEqual(['run_one', 'run_two', 'run_three'])
+
+    // logrotate copytruncate semantics: file is truncated and replaced with
+    // a single shorter line. statSync size shrinks below our last offset, so
+    // the tailer must reset the position to 0 and re-read from the start.
+    writeFileSync(file, VALID('run_post', 'BLOCKED') + '\n')
+    await wait(500)
+
+    expect(events.map((e) => e.run_id)).toEqual(['run_one', 'run_two', 'run_three', 'run_post'])
+    await tailer.stop()
+  })
+
   it('stop() halts further emissions', async () => {
     const tailer = new Tailer({ auditDir, todayDir: today, filter: 'all' })
     const events: AuditEventV1[] = []

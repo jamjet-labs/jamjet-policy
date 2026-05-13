@@ -117,6 +117,27 @@ describe('CloudClient', () => {
     expect(err2.kind).toBe('retry')
   })
 
+  it('postEvents wraps malformed-2xx as TransientError (not raw SyntaxError)', async () => {
+    ;({ server, port } = await startMockServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end('not json {')
+    }))
+    client = new CloudClient({ apiBase: `http://127.0.0.1:${port}`, apiKey: 'jj_test_key' })
+    const err = await client.postEvents([fakeEvent('run_a')]).catch((e) => e)
+    expect(err).toBeInstanceOf(TransientError)
+    expect(err.kind).toBe('retry')
+  })
+
+  it('approvalsPending wraps malformed-2xx as TransientError', async () => {
+    ;({ server, port } = await startMockServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end('garbage')
+    }))
+    client = new CloudClient({ apiBase: `http://127.0.0.1:${port}`, apiKey: 'jj_test_key' })
+    const err = await client.approvalsPending(['run_a']).catch((e) => e)
+    expect(err).toBeInstanceOf(TransientError)
+  })
+
   it('postEvents tags request body with pathMode for telemetry', async () => {
     let bodyCaptured = ''
     ;({ server, port } = await startMockServer((req, res) => {

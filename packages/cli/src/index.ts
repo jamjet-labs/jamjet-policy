@@ -137,7 +137,18 @@ async function main(): Promise<void> {
       process.stdout.write('daemon not running\n')
       return
     }
-    const info = JSON.parse(readFileSync(lockPath, 'utf-8')) as { pid: number }
+    let info: { pid: number }
+    try {
+      info = JSON.parse(readFileSync(lockPath, 'utf-8')) as { pid: number }
+      if (typeof info?.pid !== 'number') throw new Error('missing pid field')
+    } catch (e) {
+      process.stderr.write(
+        `corrupt lock file at ${lockPath}: ${(e as Error).message}. ` +
+          `Delete it manually if no daemon is running.\n`,
+      )
+      process.exitCode = 1
+      return
+    }
     try {
       process.kill(info.pid, 'SIGTERM')
     } catch (e) {
