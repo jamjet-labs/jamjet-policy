@@ -221,6 +221,47 @@ describe('Daemon', () => {
     await daemon.stop()
   }, 10_000)
 
+  it('rolls back lock + state when start() fails mid-init', async () => {
+    let port: number
+    ;({ server, port } = await startMockCloud({}))
+
+    // Force start() to fail past acquireLock: pre-create outbox.db as a
+    // directory so better-sqlite3 cannot open it.
+    const syncDir = join(home, 'sync')
+    mkdirSync(join(syncDir, 'outbox.db'), { recursive: true })
+
+    const daemon = new Daemon({
+      config: mkConfig(`http://127.0.0.1:${port}`),
+      homeDir: home,
+    })
+    await expect(daemon.start()).rejects.toBeTruthy()
+    expect(daemon.snapshot().state).toBe('not_running')
+    expect(existsSync(join(syncDir, 'daemon.pid'))).toBe(false)
+
+    // Fresh start after fixing the underlying issue.
+    rmSync(join(syncDir, 'outbox.db'), { recursive: true, force: true })
+    const daemon2 = new Daemon({
+      config: mkConfig(`http://127.0.0.1:${port}`),
+      homeDir: home,
+    })
+    await daemon2.start()
+    expect(daemon2.snapshot().state).toBe('ok')
+    await daemon2.stop()
+  }, 10_000)
+
+  it('snapshot reports not_running after stop()', async () => {
+    let port: number
+    ;({ server, port } = await startMockCloud({}))
+    const daemon = new Daemon({
+      config: mkConfig(`http://127.0.0.1:${port}`),
+      homeDir: home,
+    })
+    await daemon.start()
+    expect(daemon.snapshot().state).toBe('ok')
+    await daemon.stop()
+    expect(daemon.snapshot().state).toBe('not_running')
+  }, 10_000)
+
   it('replays backlog at startup', async () => {
     const pushed: any[] = []
     let port: number
