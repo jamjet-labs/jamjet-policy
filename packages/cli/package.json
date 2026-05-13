@@ -1,7 +1,7 @@
 {
   "name": "@jamjet/cli",
-  "version": "0.1.0",
-  "description": "JamJet CLI — unified audit show + approve across every JamJet adapter.",
+  "version": "0.2.0",
+  "description": "JamJet CLI — audit show + approve + cloud link + sync daemon",
   "type": "module",
   "bin": {
     "jamjet": "./dist/index.js"
@@ -10,18 +10,30 @@
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --shims --clean",
     "test": "vitest run",
+    "test:reliability": "vitest run --config vitest.reliability.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@jamjet/cloud": "^0.3.0"
+    "@jamjet/cloud": "^0.3.0",
+    "better-sqlite3": "^11.5.0",
+    "chokidar": "^3.6.0",
+    "proper-lockfile": "^4.1.2",
+    "undici": "^6.21.0",
+    "yaml": "^2.6.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
     "typescript": "^5.5.0",
     "tsup": "^8.0.0",
     "vitest": "^2.0.0",
-    "@types/node": "^20.0.0"
+    "@types/node": "^20.0.0",
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/proper-lockfile": "^4.1.4"
   },
-  "keywords": ["ai-agents", "agent-safety", "cli", "ai-governance"],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": ["ai-agents", "agent-safety", "cli", "ai-governance", "cloud-sync"],
   "license": "Apache-2.0",
   "publishConfig": { "access": "public" },
   "repository": {
