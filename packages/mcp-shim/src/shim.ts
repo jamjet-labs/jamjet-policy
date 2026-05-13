@@ -1,8 +1,15 @@
-import { PolicyEvaluator } from '@jamjet/cloud'
+import { PolicyEvaluator, type CloudPusher } from '@jamjet/cloud'
 import { loadPolicy, AuditWriter, ApprovalQueue } from '@jamjet/cloud/node'
 import { JsonRpcStream, type JsonRpcRequest } from './jsonrpc.js'
 import { Supervisor } from './supervisor.js'
 import { interceptToolsCall, blockResponse } from './tools-call.js'
+import {
+  buildCloudPusher,
+  pushAuditEvent,
+  resolveArgsRedaction,
+  traceIdFromMcpRequest,
+  type ArgsRedactionMode,
+} from './cloud-push.js'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -11,6 +18,10 @@ export interface ShimOptions {
   serverName: string
   command: string
   args: string[]
+  /** Inject a CloudPusher; undefined falls back to env-driven detection. */
+  cloudPusher?: CloudPusher | null
+  /** R9 args redaction for events leaving the host. Defaults to env or 'full'. */
+  argsRedaction?: ArgsRedactionMode
 }
 
 export async function runShim(options: ShimOptions): Promise<number | null> {
@@ -23,6 +34,9 @@ export async function runShim(options: ShimOptions): Promise<number | null> {
   const audit = new AuditWriter({ destination: auditDir, adapter: 'mcp-shim' })
   const approvals = new ApprovalQueue({ pendingDir, defaultTimeoutMs: 300_000 })
 
+  const pusher = options.cloudPusher === undefined ? buildCloudPusher() : options.cloudPusher
+  const redactionMode = resolveArgsRedaction(options.argsRedaction)
+
   const upstream = new JsonRpcStream()   // from client (stdin)
   const downstream = new JsonRpcStream() // from real server (subprocess stdout)
   const supervisor = new Supervisor({ command: options.command, args: options.args })
@@ -34,8 +48,12 @@ export async function runShim(options: ShimOptions): Promise<number | null> {
         supervisor.writeStdin(JsonRpcStream.encode(msg))
         return
       }
+      const run_id = `run_${Date.now().toString(36)}`
+      const executed = intercept.decision === 'ALLOWED' || intercept.decision === 'AUDIT'
+      const trace_id = traceIdFromMcpRequest((msg as JsonRpcRequest).params)
       audit.write({
-        run_id: `run_${Date.now().toString(36)}`,
+        run_id,
+        trace_id,
         host: 'claude-desktop',  // best guess; future: detect via initialize params
         server: options.serverName,
         tool: intercept.tool,
@@ -43,8 +61,23 @@ export async function runShim(options: ShimOptions): Promise<number | null> {
         decision: intercept.decision,
         rule: intercept.rule,
         rule_kind: intercept.rule_kind,
-        executed: intercept.decision === 'ALLOWED' || intercept.decision === 'AUDIT',
+        executed,
       })
+      if (pusher) {
+        pushAuditEvent({
+          pusher,
+          run_id,
+          serverName: options.serverName,
+          tool: intercept.tool,
+          args: intercept.args,
+          decision: intercept.decision,
+          rule: intercept.rule,
+          rule_kind: intercept.rule_kind,
+          executed,
+          trace_id,
+          redactionMode,
+        })
+      }
       if (intercept.decision === 'BLOCKED') {
         process.stdout.write(JsonRpcStream.encode(blockResponse((msg as JsonRpcRequest).id, intercept.rule)))
         return
