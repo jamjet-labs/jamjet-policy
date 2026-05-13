@@ -32,6 +32,37 @@ describe('replayBacklog', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
+  it('redacts args before insert when argsRedaction=full (R9)', async () => {
+    const auditDir = join(dir, 'audit', '2026-05-12')
+    mkdirSync(auditDir, { recursive: true })
+    const eventWithArgs = JSON.stringify({
+      ts: '2026-05-12T00:00:00.000Z',
+      run_id: 'run_secret',
+      adapter: 'openai-guardrail',
+      host: 'openai-agents-sdk',
+      tool: 'payments.refund',
+      decision: 'BLOCKED',
+      executed: false,
+      schema_version: 1,
+      args: { customer_email: 'alice@example.com', amount: 50000 },
+    })
+    writeFileSync(join(auditDir, 'a.jsonl'), eventWithArgs + '\n')
+
+    await replayBacklog({
+      outbox,
+      auditDir: join(dir, 'audit'),
+      filter: 'all',
+      argsRedaction: 'full',
+    })
+
+    const rows = outbox.dueRows(10, { ignoreSchedule: true })
+    expect(rows).toHaveLength(1)
+    const event = JSON.parse(rows[0].event_json)
+    expect(event.args).toEqual({ redacted: true })
+    expect(event.args_redaction).toBe('full')
+    expect(event.args.customer_email).toBeUndefined()
+  })
+
   it('enqueues events newer than lastSyncedTs', async () => {
     const auditDir = join(dir, 'audit', '2026-05-12')
     mkdirSync(auditDir, { recursive: true })
@@ -49,6 +80,7 @@ describe('replayBacklog', () => {
       outbox,
       auditDir: join(dir, 'audit'),
       filter: 'interesting',
+      argsRedaction: 'full',
     })
     expect(count).toBe(2)
     expect(outbox.depth()).toBe(2)
@@ -68,6 +100,7 @@ describe('replayBacklog', () => {
       outbox,
       auditDir: join(dir, 'audit'),
       filter: 'interesting',
+      argsRedaction: 'full',
     })
     expect(count).toBe(2)
   })
@@ -86,6 +119,7 @@ describe('replayBacklog', () => {
       outbox,
       auditDir: join(dir, 'audit'),
       filter: 'interesting',
+      argsRedaction: 'full',
     })
     expect(count).toBe(1)
   })
@@ -110,6 +144,7 @@ describe('replayBacklog', () => {
       outbox,
       auditDir: join(dir, 'audit'),
       filter: 'all',
+      argsRedaction: 'full',
     })
     expect(count).toBe(3)
   })
@@ -119,6 +154,7 @@ describe('replayBacklog', () => {
       outbox,
       auditDir: join(dir, 'missing'),
       filter: 'all',
+      argsRedaction: 'full',
     })
     expect(count).toBe(0)
   })
@@ -133,6 +169,7 @@ describe('replayBacklog', () => {
       outbox,
       auditDir: join(dir, 'audit'),
       filter: 'all',
+      argsRedaction: 'full',
     })
     expect(count).toBe(0)
   })
@@ -152,6 +189,7 @@ describe('replayBacklog', () => {
       outbox,
       auditDir: join(dir, 'audit'),
       filter: 'all',
+      argsRedaction: 'full',
     })
     expect(count).toBe(1)
   })
@@ -168,6 +206,7 @@ describe('replayBacklog', () => {
       outbox,
       auditDir: join(dir, 'audit'),
       filter: 'all',
+      argsRedaction: 'full',
     })
     expect(count).toBe(0)
   })

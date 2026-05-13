@@ -15,12 +15,15 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { AuditEventV1Schema, INTERESTING_DECISIONS } from '../types.js'
+import { applyRedaction, type RedactionMode } from './redaction.js'
 import type { Outbox } from './outbox.js'
 
 export interface ReplayOptions {
   outbox: Outbox
   auditDir: string
   filter: 'all' | 'interesting'
+  /** R9: redact args BEFORE enqueue — same contract the live tailer applies. */
+  argsRedaction: RedactionMode
 }
 
 const DATE_DIR_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -63,7 +66,8 @@ export async function replayBacklog(opts: ReplayOptions): Promise<number> {
         ) {
           continue
         }
-        opts.outbox.insert(JSON.stringify(event), event.ts)
+        const redacted = applyRedaction(event, opts.argsRedaction)
+        opts.outbox.insert(JSON.stringify(redacted), redacted.ts)
         count++
       }
     }

@@ -71,11 +71,13 @@ export class Daemon {
       pathMode: 'daemon',
     })
 
-    // 1. Startup replay (R12).
+    // 1. Startup replay (R12). Applies args redaction inline so backlog
+    // events honor the same R9 contract as live tailer writes.
     const replayed = await replayBacklog({
       outbox: this.outbox,
       auditDir,
       filter: this.opts.config.cloud.push,
+      argsRedaction: this.opts.config.cloud.args_redaction,
     })
     process.stderr.write(
       `[jamjet-sync] startup-replay enqueued ${replayed} backlog events\n`,
