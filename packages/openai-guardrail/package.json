@@ -1,6 +1,6 @@
 {
   "name": "@jamjet/openai-guardrail",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "JamJet policy as an OpenAI Agents SDK tool guardrail. One policy file, every tool call governed.",
   "type": "module",
   "main": "./dist/index.js",
@@ -20,7 +20,7 @@
     "conformance": "vitest run conformance"
   },
   "dependencies": {
-    "@jamjet/cloud": "^0.3.0",
+    "@jamjet/cloud": "^0.3.1",
     "yaml": "^2.5.0"
   },
   "devDependencies": {

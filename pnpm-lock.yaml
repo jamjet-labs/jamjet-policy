@@ -25,8 +25,8 @@ importers:
   packages/claude-code-hook:
     dependencies:
       '@jamjet/cloud':
-        specifier: ^0.3.0
-        version: 0.3.0
+        specifier: ^0.3.1
+        version: 0.3.1
       yaml:
         specifier: ^2.5.0
         version: 2.9.0
@@ -90,8 +90,8 @@ importers:
   packages/mcp-shim:
     dependencies:
       '@jamjet/cloud':
-        specifier: ^0.3.0
-        version: 0.3.0
+        specifier: ^0.3.1
+        version: 0.3.1
       yaml:
         specifier: ^2.5.0
         version: 2.9.0
@@ -112,8 +112,8 @@ importers:
   packages/openai-guardrail:
     dependencies:
       '@jamjet/cloud':
-        specifier: ^0.3.0
-        version: 0.3.0
+        specifier: ^0.3.1
+        version: 0.3.1
       yaml:
         specifier: ^2.5.0
         version: 2.9.0
@@ -429,6 +429,21 @@ packages:
 
   '@jamjet/cloud@0.3.0':
     resolution: {integrity: sha512-wkbTooTm4S6mEgvaM56X/CXaT2SqQi5UghKshG0W1vOMXIaGsHc+Rd0IPdxDNtzXCMfR3zerLRa7uCLZ/+z2jg==}
+    engines: {node: '>=20.0.0'}
+    peerDependencies:
+      '@anthropic-ai/sdk': '>=0.27.0'
+      msw: '>=2 <3'
+      openai: '>=4.0.0'
+    peerDependenciesMeta:
+      '@anthropic-ai/sdk':
+        optional: true
+      msw:
+        optional: true
+      openai:
+        optional: true
+
+  '@jamjet/cloud@0.3.1':
+    resolution: {integrity: sha512-h3BdeyjQGrulg2g0NmvwEhKkHYVc5QzyFEnUZfJ5v7cZ+tfuYUiQ8y7LcgcxMPKD62ScD0c+mXPeczGZPzCiZA==}
     engines: {node: '>=20.0.0'}
     peerDependencies:
       '@anthropic-ai/sdk': '>=0.27.0'
@@ -1334,6 +1349,11 @@ snapshots:
     optional: true
 
   '@jamjet/cloud@0.3.0':
+    dependencies:
+      yaml: 2.9.0
+      zod: 3.25.76
+
+  '@jamjet/cloud@0.3.1':
     dependencies:
       yaml: 2.9.0
       zod: 3.25.76

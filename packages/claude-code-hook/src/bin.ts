@@ -2,6 +2,12 @@
 import { evaluateHookInput, type HookInput } from './hook.js'
 import { PolicyEvaluator } from '@jamjet/cloud'
 import { loadPolicy, AuditWriter } from '@jamjet/cloud/node'
+import {
+  buildCloudPusher,
+  pushAuditEvent,
+  resolveArgsRedaction,
+  traceIdFromEnv,
+} from './cloud-push.js'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -36,8 +42,12 @@ async function main(): Promise<void> {
   // Write audit event
   const auditDir = policy.audit?.destination?.replace(/^~/, homedir()) ?? join(homedir(), '.jamjet', 'audit')
   const writer = new AuditWriter({ destination: auditDir, adapter: 'claude-code-hook' })
+  const run_id = `run_${Date.now().toString(36)}`
+  const executed = result.decision === 'ALLOWED' || result.decision === 'AUDIT'
+  const trace_id = traceIdFromEnv()
   writer.write({
-    run_id: `run_${Date.now().toString(36)}`,
+    run_id,
+    trace_id,
     host: 'claude-code',
     server: result.server,
     tool: result.effective_tool,
@@ -45,8 +55,26 @@ async function main(): Promise<void> {
     decision: result.decision,
     rule: result.rule,
     rule_kind: result.rule_kind,
-    executed: result.decision === 'ALLOWED' || result.decision === 'AUDIT',
+    executed,
   })
+
+  // Path B direct-push (when JAMJET_CLOUD_TOKEN + env says direct).
+  const pusher = buildCloudPusher()
+  if (pusher) {
+    pushAuditEvent({
+      pusher,
+      run_id,
+      tool: result.effective_tool,
+      args: input.tool_input,
+      decision: result.decision,
+      rule: result.rule,
+      rule_kind: result.rule_kind,
+      executed,
+      server: result.server,
+      trace_id,
+      redactionMode: resolveArgsRedaction(),
+    })
+  }
 
   // Stderr feedback
   if (result.decision === 'BLOCKED') {
