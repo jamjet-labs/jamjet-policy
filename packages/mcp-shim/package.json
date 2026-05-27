@@ -1,7 +1,7 @@
 {
   "name": "@jamjet/mcp-shim",
-  "version": "0.1.1",
-  "description": "JamJet policy + audit + approval as an MCP stdio interceptor. Drop-in between any MCP client and any MCP server.",
+  "version": "0.2.0",
+  "description": "JamJet policy + audit + approval as an MCP stdio interceptor. Drop-in between any MCP client and any MCP server. Or run --serve-self as a standalone MCP server exposing policy_evaluate, policy_list_rules, policy_load_info to any agent.",
   "type": "module",
   "bin": {
     "jamjet-mcp-shim": "./dist/bin.js"
