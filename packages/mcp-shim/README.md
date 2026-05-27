@@ -77,6 +77,8 @@ Three read-only policy tools become available to the agent:
 
 Useful when the agent itself needs to *reason about* the policy ("is `fs.delete_file` allowed before I propose it?"), and a clean alternative to the interceptor pattern when there is no downstream MCP server to wrap.
 
+If `--policy` is omitted and no `policy.yaml` is discovered (cwd, `~/.jamjet/`, or the `JAMJET_POLICY_FILE` env var), the server starts with a built-in **demo policy** (`*delete*` → block, `*drop*` → block, `*destructive*` / `payments.*` → require_approval) and writes a one-line warning to stderr telling you how to bind real rules. `policy_load_info` reports `policy_source: "demo"` so calling clients can detect they're talking to the fallback.
+
 ## Same policy, other places
 
 The same `policy.yaml` is consumed by:

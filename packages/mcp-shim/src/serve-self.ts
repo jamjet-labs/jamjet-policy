@@ -1,5 +1,6 @@
 import type { Policy, PolicyEvaluator } from '@jamjet/cloud'
 import { JsonRpcStream, type JsonRpcRequest, type JsonRpcResponse } from './jsonrpc.js'
+import { bootstrapPolicy, type PolicySource } from './bootstrap-policy.js'
 
 export const POLICY_TOOL_NAMES = ['policy_evaluate', 'policy_list_rules', 'policy_load_info'] as const
 
@@ -7,6 +8,8 @@ export interface ServeSelfContext {
   policy: Policy
   evaluator: PolicyEvaluator
   policyPath: string
+  /** "file" when a user-supplied or discovered policy.yaml was loaded; "demo" when the built-in fallback is in use. */
+  policySource: PolicySource
 }
 
 export interface JsonSchemaObject {
@@ -190,15 +193,22 @@ function callPolicyListRules(id: number | string, ctx: ServeSelfContext): JsonRp
 function callPolicyLoadInfo(id: number | string, ctx: ServeSelfContext): JsonRpcResponse {
   const info = {
     policy_path: ctx.policyPath,
+    policy_source: ctx.policySource,
     rules_count: ctx.policy.rules.length,
     policy_version: ctx.policy.version,
   }
+  const sourceNote = ctx.policySource === 'demo'
+    ? ' (built-in demo policy — set --policy to bind real rules)'
+    : ''
   return {
     jsonrpc: '2.0',
     id,
     result: {
       content: [
-        { type: 'text', text: `Policy loaded from ${info.policy_path} — ${info.rules_count} rule(s), schema v${info.policy_version}.` },
+        {
+          type: 'text',
+          text: `Policy loaded from ${info.policy_path} — ${info.rules_count} rule(s), schema v${info.policy_version}.${sourceNote}`,
+        },
       ],
       structuredContent: info,
     },
@@ -221,19 +231,27 @@ export interface ServeSelfOptions {
  * Run jamjet-mcp-shim as a standalone MCP server exposing the three
  * policy introspection tools. No downstream subprocess is spawned.
  * The server speaks line-delimited JSON-RPC 2.0 over stdio per MCP convention.
+ *
+ * If no policy file is supplied or discovered, the server falls back to a
+ * built-in demo policy and writes a single-line warning to stderr.
  */
 export async function runServeSelf(options: ServeSelfOptions): Promise<number> {
   const { loadPolicy } = await import('@jamjet/cloud/node')
   const { PolicyEvaluator } = await import('@jamjet/cloud')
 
-  const policy = loadPolicy(options.policyPath)
+  const bootstrap = bootstrapPolicy({ policyPath: options.policyPath }, { loadPolicy })
+  if (bootstrap.warning) {
+    process.stderr.write(bootstrap.warning + '\n')
+  }
+
   const evaluator = new PolicyEvaluator()
-  for (const r of policy.rules) evaluator.add(r.action, r.match)
+  for (const r of bootstrap.policy.rules) evaluator.add(r.action, r.match)
 
   const ctx: ServeSelfContext = {
-    policy,
+    policy: bootstrap.policy,
     evaluator,
-    policyPath: options.policyPath ?? '(built-in defaults)',
+    policyPath: bootstrap.policyPath,
+    policySource: bootstrap.source,
   }
 
   const upstream = new JsonRpcStream()

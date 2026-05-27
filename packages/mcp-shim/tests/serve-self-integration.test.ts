@@ -97,4 +97,68 @@ describe('--serve-self integration', () => {
       proc.kill('SIGTERM')
     }
   })
+
+  it(
+    'falls back to built-in demo policy when no --policy is supplied and none is discoverable',
+    { timeout: 20_000 },
+    async () => {
+      // Empty cwd + redirected HOME so loadPolicy()'s search chain (env → cwd → ~/.jamjet) misses.
+      const emptyDir = mkdtempSync(join(tmpdir(), 'shim-no-policy-'))
+      const fakeHome = mkdtempSync(join(tmpdir(), 'shim-fake-home-'))
+      const proc = spawn('node', [SHIM, '--serve-self'], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        cwd: emptyDir,
+        env: {
+          ...process.env,
+          HOME: fakeHome,
+          JAMJET_POLICY_FILE: '',
+        },
+      }) as ChildProcessWithoutNullStreams
+
+      const stderrChunks: Buffer[] = []
+      proc.stderr.on('data', (b: Buffer) => stderrChunks.push(b))
+
+      try {
+        const initPromise = nextResponse(proc, (r) => r.id === 100)
+        proc.stdin.write(
+          JSON.stringify({ jsonrpc: '2.0', id: 100, method: 'initialize', params: {} }) + '\n',
+        )
+        await initPromise
+
+        const infoPromise = nextResponse(proc, (r) => r.id === 101)
+        proc.stdin.write(
+          JSON.stringify({
+            jsonrpc: '2.0', id: 101, method: 'tools/call',
+            params: { name: 'policy_load_info' },
+          }) + '\n',
+        )
+        const info = await infoPromise
+        const infoResult = info.result as {
+          content: Array<{ text: string }>
+          structuredContent: { policy_source: string; rules_count: number }
+        }
+        expect(infoResult.structuredContent.policy_source).toBe('demo')
+        expect(infoResult.structuredContent.rules_count).toBeGreaterThan(0)
+        expect(infoResult.content[0].text).toMatch(/demo/i)
+
+        const stderr = Buffer.concat(stderrChunks).toString('utf-8')
+        expect(stderr).toMatch(/built-in demo policy/i)
+        expect(stderr).toMatch(/--policy/)
+
+        // Sanity: the demo policy actually evaluates — *delete* should block.
+        const evalPromise = nextResponse(proc, (r) => r.id === 102)
+        proc.stdin.write(
+          JSON.stringify({
+            jsonrpc: '2.0', id: 102, method: 'tools/call',
+            params: { name: 'policy_evaluate', arguments: { tool_name: 'fs.delete_file' } },
+          }) + '\n',
+        )
+        const evalResp = await evalPromise
+        const evalResult = evalResp.result as { structuredContent: { decision: string } }
+        expect(evalResult.structuredContent.decision).toBe('block')
+      } finally {
+        proc.kill('SIGTERM')
+      }
+    },
+  )
 })

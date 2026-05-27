@@ -7,16 +7,18 @@ import {
 } from '../src/serve-self.js'
 import { PolicyEvaluator } from '@jamjet/cloud'
 
-function ctxFromRules(rules: Array<{ match: string; action: 'allow' | 'block' | 'require_approval' | 'audit' }>): ServeSelfContext {
+function ctxFromRules(
+  rules: Array<{ match: string; action: 'allow' | 'block' | 'require_approval' | 'audit' }>,
+  overrides: Partial<ServeSelfContext> = {},
+): ServeSelfContext {
   const evaluator = new PolicyEvaluator()
   for (const r of rules) evaluator.add(r.action, r.match)
   return {
-    policy: {
-      version: 1,
-      rules,
-    },
+    policy: { version: 1, rules },
     evaluator,
     policyPath: '/tmp/test-policy.yaml',
+    policySource: 'file',
+    ...overrides,
   }
 }
 
@@ -103,14 +105,38 @@ describe('handleServeSelfRequest', () => {
     expect(result.structuredContent.rules[2]).toMatchObject({ index: 2, action: 'audit', pattern: 'slack.send_message' })
   })
 
-  it('tools/call policy_load_info reports the path and rule count', () => {
+  it('tools/call policy_load_info reports the path, rule count, and source=file', () => {
     const r = handleServeSelfRequest(
       { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'policy_load_info' } },
       ctx,
     )
-    const result = r.result as { structuredContent: { policy_path: string; rules_count: number } }
+    const result = r.result as {
+      content: Array<{ type: string; text: string }>
+      structuredContent: { policy_path: string; rules_count: number; policy_source: string }
+    }
     expect(result.structuredContent.policy_path).toBe('/tmp/test-policy.yaml')
     expect(result.structuredContent.rules_count).toBe(3)
+    expect(result.structuredContent.policy_source).toBe('file')
+    expect(result.content[0].text).not.toMatch(/demo/i)
+  })
+
+  it('policy_load_info on demo-source context flags it in text + structured output', () => {
+    const demoCtx = ctxFromRules(
+      [{ match: '*delete*', action: 'block' }],
+      { policySource: 'demo', policyPath: '(built-in demo policy)' },
+    )
+    const r = handleServeSelfRequest(
+      { jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: 'policy_load_info' } },
+      demoCtx,
+    )
+    const result = r.result as {
+      content: Array<{ type: string; text: string }>
+      structuredContent: { policy_source: string; policy_path: string }
+    }
+    expect(result.structuredContent.policy_source).toBe('demo')
+    expect(result.structuredContent.policy_path).toBe('(built-in demo policy)')
+    expect(result.content[0].text).toMatch(/demo/i)
+    expect(result.content[0].text).toMatch(/--policy/)
   })
 
   it('tools/call with unknown tool name returns JSON-RPC error -32601', () => {
