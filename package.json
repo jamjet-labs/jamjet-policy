@@ -2,6 +2,15 @@
   "name": "jamjet-policy",
   "version": "0.0.0",
   "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jamjet-labs/jamjet-policy.git"
+  },
+  "homepage": "https://github.com/jamjet-labs/jamjet-policy",
+  "bugs": {
+    "url": "https://github.com/jamjet-labs/jamjet-policy/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=20"
