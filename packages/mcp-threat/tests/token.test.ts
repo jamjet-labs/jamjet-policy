@@ -17,6 +17,9 @@ describe('parseJwtAudience', () => {
   it('returns null for a JWT without aud', () => {
     expect(parseJwtAudience(jwt({ sub: 'x' }))).toBeNull()
   })
+  it('returns null for a multi-element aud array (documented limitation)', () => {
+    expect(parseJwtAudience(jwt({ aud: ['a', 'b'] }))).toBeNull()
+  })
 })
 
 describe('detectTokenPassthrough', () => {

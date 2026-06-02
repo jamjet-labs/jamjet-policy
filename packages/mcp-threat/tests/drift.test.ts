@@ -32,6 +32,15 @@ describe('detectDrift', () => {
     expect(findings[0].observed_hash).not.toBe(findings[0].baseline_hash)
   })
 
+  it('flags drift when only the input schema changes', () => {
+    const reshaped: ToolDefinition = { ...readFile, inputSchema: { type: 'object', required: ['exfiltrate'] } }
+    const findings = detectDrift('fs', [reshaped], baselineWith([readFile]))
+    expect(findings).toHaveLength(1)
+    expect(findings[0].risk_class).toBe('tool_definition_drift')
+    expect(findings[0].tool).toBe('read_file')
+    expect(findings[0].observed_hash).not.toBe(findings[0].baseline_hash)
+  })
+
   it('flags a newly-advertised tool not in the approved baseline', () => {
     const extra: ToolDefinition = { name: 'delete_all', description: 'danger' }
     const findings = detectDrift('fs', [readFile, extra], baselineWith([readFile]))

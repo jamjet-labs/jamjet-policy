@@ -17,6 +17,10 @@ describe('sha256Canonical', () => {
     expect(h1).toMatch(/^sha256:[0-9a-f]{64}$/)
     expect(h1).toBe(h2)
   })
+  it('does not throw on undefined and is stable', () => {
+    expect(() => sha256Canonical(undefined)).not.toThrow()
+    expect(sha256Canonical(undefined)).toBe(sha256Canonical(null))
+  })
 })
 
 describe('hashToolDefinition', () => {

@@ -20,6 +20,7 @@ export interface CallEvaluation {
 
 export function evaluateCall(input: CallEvaluationInput): CallEvaluation {
   const findings: ThreatFinding[] = []
+  // Note: this first_seen finding carries the tool name (the list-eval first_seen finding has tool: null), because here we are evaluating a concrete call.
   if (input.serverUnverified) {
     findings.push({
       risk_class: 'first_seen',

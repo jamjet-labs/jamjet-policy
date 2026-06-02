@@ -3,7 +3,7 @@ import type { ToolDefinition, ToolFingerprint } from './types.js'
 
 /** Deterministic JSON string with object keys sorted recursively. */
 export function canonicalize(value: unknown): string {
-  return JSON.stringify(sortValue(value))
+  return JSON.stringify(sortValue(value) ?? null)
 }
 
 function sortValue(value: unknown): unknown {

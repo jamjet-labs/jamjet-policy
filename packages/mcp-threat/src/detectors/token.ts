@@ -1,5 +1,6 @@
 import type { ThreatFinding } from '../types.js'
 
+// Multi-audience tokens (aud as a multi-element array) are intentionally not resolved to a single audience here; they return null (no single-target claim to compare). Tightening this is a follow-on.
 /** Return the `aud` claim if `value` is a JWT carrying a string audience, else null. */
 export function parseJwtAudience(value: string): string | null {
   const parts = value.split('.')
@@ -23,6 +24,7 @@ export function detectTokenPassthrough(
   targetServer: string,
 ): ThreatFinding[] {
   const findings: ThreatFinding[] = []
+  // Shallow scan: only top-level string args are inspected. Nested-object credential scanning is a follow-on.
   for (const [key, value] of Object.entries(args)) {
     if (typeof value !== 'string') continue
     const aud = parseJwtAudience(value)

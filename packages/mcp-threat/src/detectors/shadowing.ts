@@ -1,9 +1,9 @@
 import type { ThreatFinding, ToolDefinition } from '../types.js'
 
-const ZERO_WIDTH = /[​-‍﻿]/g
+const INVISIBLE = /[­​-‏  ⁠﻿]/g
 
 export function normalizeName(name: string): string {
-  return name.normalize('NFKC').toLowerCase().replace(ZERO_WIDTH, '')
+  return name.normalize('NFKC').toLowerCase().replace(INVISIBLE, '')
 }
 
 /** Detect a single tool name claimed by more than one server. */
