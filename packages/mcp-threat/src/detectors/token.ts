@@ -4,8 +4,10 @@ import type { ThreatFinding } from '../types.js'
 export function parseJwtAudience(value: string): string | null {
   const parts = value.split('.')
   if (parts.length !== 3) return null
+  const payloadSegment = parts[1]
+  if (payloadSegment === undefined) return null
   try {
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8')) as Record<string, unknown>
+    const payload = JSON.parse(Buffer.from(payloadSegment, 'base64url').toString('utf-8')) as Record<string, unknown>
     const aud = payload.aud
     if (typeof aud === 'string') return aud
     if (Array.isArray(aud) && aud.length === 1 && typeof aud[0] === 'string') return aud[0]
