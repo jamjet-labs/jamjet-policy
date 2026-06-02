@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@jamjet/cloud": "^0.3.1",
+    "@jamjet/mcp-threat": "workspace:*",
     "yaml": "^2.5.0"
   },
   "devDependencies": {
