@@ -1,0 +1,8 @@
+version: 1
+rules:
+  - { match: "read_file", action: allow }
+threat:
+  on_first_seen: require_approval
+  on_definition_drift: block
+audit:
+  destination: ~/.jamjet/audit
