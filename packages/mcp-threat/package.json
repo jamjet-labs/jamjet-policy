@@ -1,0 +1,31 @@
+{
+  "name": "@jamjet/mcp-threat",
+  "version": "0.1.0",
+  "description": "Deterministic MCP threat controls: tool-definition drift, shadowing, token passthrough, trust baseline, and MCP Security Receipts. Pure, portable, reusable across JamJet MCP adapters.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --shims --clean",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "conformance": "vitest run"
+  },
+  "dependencies": { "yaml": "^2.5.0" },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "tsup": "^8.0.0",
+    "vitest": "^2.0.0",
+    "@types/node": "^20.0.0"
+  },
+  "license": "Apache-2.0",
+  "publishConfig": { "access": "public" },
+  "keywords": ["mcp", "model-context-protocol", "ai-governance", "agent-safety", "prompt-injection", "tool-poisoning"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jamjet-labs/jamjet-policy.git",
+    "directory": "packages/mcp-threat"
+  }
+}
