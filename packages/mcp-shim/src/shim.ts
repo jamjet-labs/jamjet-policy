@@ -124,17 +124,21 @@ export async function runShim(options: ShimOptions): Promise<number | null> {
 
   downstream.on('message', (msg) => {
     if (isToolsListResult(msg)) {
-      const tools = extractToolsFromListResponse(msg)
-      const evalResult = evaluateToolsList(options.serverName, tools, baseline, threatConfig)
-      serverUnverified = evalResult.serverUnverified
-      flagged.clear()
-      for (const [name, f] of evalResult.flagged) flagged.set(name, f)
-      if (evalResult.decision.finding) {
-        emitReceipt(evalResult.decision.finding, evalResult.decision.decision, 'tools/list')
-        process.stderr.write(
-          `JamJet threat: ${evalResult.decision.finding.risk_class} on ${options.serverName} ` +
-          `(${evalResult.decision.decision})\n`,
-        )
+      try {
+        const tools = extractToolsFromListResponse(msg)
+        const evalResult = evaluateToolsList(options.serverName, tools, baseline, threatConfig)
+        serverUnverified = evalResult.serverUnverified
+        flagged.clear()
+        for (const [name, f] of evalResult.flagged) flagged.set(name, f)
+        if (evalResult.decision.finding) {
+          emitReceipt(evalResult.decision.finding, evalResult.decision.decision, 'tools/list')
+          process.stderr.write(
+            `JamJet threat: ${evalResult.decision.finding.risk_class} on ${options.serverName} ` +
+            `(${evalResult.decision.decision})\n`,
+          )
+        }
+      } catch (err) {
+        process.stderr.write(`JamJet threat: tools/list evaluation error (forwarding unscanned): ${(err as Error).message}\n`)
       }
     }
     process.stdout.write(JsonRpcStream.encode(msg))

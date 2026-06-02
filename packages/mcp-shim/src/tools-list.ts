@@ -8,8 +8,8 @@ interface ToolsListResult {
 }
 
 export function isToolsListResult(msg: JsonRpcMessage): msg is ToolsListResult {
-  const m = msg as { result?: { tools?: unknown } }
-  return Boolean(m.result && Array.isArray(m.result.tools))
+  const m = msg as { id?: unknown; result?: { tools?: unknown } }
+  return m.id !== undefined && Boolean(m.result && Array.isArray(m.result.tools))
 }
 
 export function extractToolsFromListResponse(msg: JsonRpcMessage): ToolDefinition[] {

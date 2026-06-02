@@ -10,6 +10,9 @@ describe('isToolsListResult', () => {
     expect(isToolsListResult({ jsonrpc: '2.0' as const, id: 1, result: { content: [] } })).toBe(false)
     expect(isToolsListResult({ jsonrpc: '2.0' as const, method: 'tools/call' })).toBe(false)
   })
+  it('ignores a message with tools but no id', () => {
+    expect(isToolsListResult({ jsonrpc: '2.0' as const, result: { tools: [{ name: 'a' }] } } as any)).toBe(false)
+  })
 })
 
 describe('extractToolsFromListResponse', () => {
