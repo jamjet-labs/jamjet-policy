@@ -10,6 +10,7 @@ import { syncInstall } from './sync/install.js'
 import { resolveServerCommand } from './mcp/resolve.js'
 import { trustReview, trustApprove } from './mcp/trust.js'
 import { mcpGraph, type GraphFormat } from './mcp/graph.js'
+import { mcpBench, type BenchFormat } from './mcp/bench.js'
 
 const VERSION = '0.2.0'
 
@@ -34,6 +35,7 @@ MCP:
   jamjet mcp trust review [--json]
   jamjet mcp trust approve <name> [-- <cmd> <args...>]
   jamjet mcp graph [--risk] [--format text|mermaid|json] [--lock <path>] [--policy <path>]
+  jamjet mcp bench [--iterations N] [--format text|json]
 
 Misc:
   jamjet --version
@@ -212,6 +214,24 @@ async function main(): Promise<void> {
       lockPath: getFlag(rest, '--lock'),
       policyPath: getFlag(rest, '--policy'),
     })
+    return
+  }
+
+  if (cmd === 'mcp' && sub === 'bench') {
+    const fmt = getFlag(rest, '--format') ?? 'text'
+    if (fmt !== 'text' && fmt !== 'json') {
+      process.stderr.write('Usage: jamjet mcp bench [--iterations N] [--format text|json]\n')
+      process.exitCode = 64
+      return
+    }
+    const iterStr = getFlag(rest, '--iterations')
+    const iterations = iterStr === undefined ? 100000 : Number(iterStr)
+    if (!Number.isInteger(iterations) || iterations <= 0) {
+      process.stderr.write('Usage: jamjet mcp bench [--iterations N] [--format text|json] (N must be a positive integer)\n')
+      process.exitCode = 64
+      return
+    }
+    mcpBench({ iterations, format: fmt as BenchFormat })
     return
   }
 
