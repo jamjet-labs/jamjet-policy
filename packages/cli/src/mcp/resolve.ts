@@ -44,6 +44,7 @@ export function resolveServerCommand(
 ): ResolvedServer {
   if (explicitParts && explicitParts.length > 0) {
     const [command, ...args] = explicitParts
+    if (!command) throw new Error('explicit parts must start with a command')
     return { command, args, env: {} }
   }
   const projectPath = opts?.projectConfig ?? join(process.cwd(), '.mcp.json')
