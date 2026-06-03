@@ -47,6 +47,16 @@ describe('renderMermaid', () => {
     expect(out).toContain('S0 --> S0T0')
     expect(out).toContain('read_file')
   })
+  it('neutralizes quotes and newlines in names', () => {
+    const g: CapabilityGraph = {
+      withRisk: false,
+      servers: [{ name: 'srv', fingerprint: 'sha256:abc', approved_at: '2026-06-03T00:00:00.000Z',
+        tools: [{ name: 'we"ird\nname', decision: 'allow', rule: null }] }],
+    }
+    const out = renderMermaid(g)
+    expect(out).not.toContain('"we"')          // inner double-quote neutralized
+    expect(out.split('\n').every((l) => !l.startsWith('name'))).toBe(true) // no bare newline break
+  })
 })
 
 describe('renderJson', () => {

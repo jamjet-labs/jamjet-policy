@@ -21,7 +21,7 @@ export function renderText(graph: CapabilityGraph): string {
 }
 
 function escapeMermaid(s: string): string {
-  return s.replace(/"/g, "'")
+  return s.replace(/"/g, "'").replace(/[\n\r]/g, ' ')
 }
 
 export function renderMermaid(graph: CapabilityGraph): string {

@@ -7,7 +7,7 @@ import { mcpGraph } from '../src/mcp/graph.js'
 
 let dir: string
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'jj-graph-')) })
-afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks() })
+afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks(); process.exitCode = 0 })
 
 describe('mcpGraph', () => {
   it('prints the hint when the lock is empty', () => {
@@ -32,15 +32,41 @@ describe('mcpGraph', () => {
     expect(text).toContain('delete_all  block')
   })
 
-  it('emits JSON with format json (and tolerates a missing policy)', () => {
+  it('emits JSON with format json', () => {
+    const lockPath = join(dir, 'mcp-trust.lock')
+    const policyPath = join(dir, 'policy.yaml')
+    saveTrustBaseline(lockPath, approveServer(
+      { version: 1, servers: {} }, 'demo', 'id', [{ name: 'read_file' }], '2026-06-03T00:00:00.000Z',
+    ))
+    writeFileSync(policyPath, 'version: 1\nrules: []\n')
+    const out = vi.spyOn(process.stdout, 'write').mockReturnValue(true)
+    mcpGraph({ format: 'json', risk: false, lockPath, policyPath })
+    const parsed = JSON.parse(out.mock.calls.join('')) as { servers: Array<{ name: string }> }
+    expect(parsed.servers[0]!.name).toBe('demo')
+  })
+
+  it('errors (non-zero) when an explicit --policy path is missing', () => {
     const lockPath = join(dir, 'mcp-trust.lock')
     saveTrustBaseline(lockPath, approveServer(
       { version: 1, servers: {} }, 'demo', 'id', [{ name: 'read_file' }], '2026-06-03T00:00:00.000Z',
     ))
-    const out = vi.spyOn(process.stdout, 'write').mockReturnValue(true)
+    vi.spyOn(process.stdout, 'write').mockReturnValue(true)
+    const err = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    mcpGraph({ format: 'text', risk: false, lockPath, policyPath: join(dir, 'missing.yaml') })
+    expect(process.exitCode).toBe(1)
+    expect(err.mock.calls.join('')).toMatch(/error loading policy/)
+  })
+
+  it('errors (non-zero) on a malformed explicit policy file', () => {
+    const lockPath = join(dir, 'mcp-trust.lock')
+    const policyPath = join(dir, 'bad.yaml')
+    saveTrustBaseline(lockPath, approveServer(
+      { version: 1, servers: {} }, 'demo', 'id', [{ name: 'read_file' }], '2026-06-03T00:00:00.000Z',
+    ))
+    writeFileSync(policyPath, '{ not: valid: yaml ::::')
+    vi.spyOn(process.stdout, 'write').mockReturnValue(true)
     vi.spyOn(process.stderr, 'write').mockReturnValue(true)
-    mcpGraph({ format: 'json', risk: false, lockPath, policyPath: join(dir, 'missing.yaml') })
-    const parsed = JSON.parse(out.mock.calls.join('')) as { servers: Array<{ name: string }> }
-    expect(parsed.servers[0]!.name).toBe('demo')
+    mcpGraph({ format: 'text', risk: false, lockPath, policyPath })
+    expect(process.exitCode).toBe(1)
   })
 })

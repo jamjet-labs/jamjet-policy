@@ -27,4 +27,14 @@ describe('classifyBlastRadius', () => {
   it('is case-insensitive', () => {
     expect(classifyBlastRadius('DeleteEverything')).toBe('destructive')
   })
+  it('handles snake_case and camelCase tokens', () => {
+    expect(classifyBlastRadius('get_user')).toBe('read')
+    expect(classifyBlastRadius('set_config')).toBe('write')
+    expect(classifyBlastRadius('rm_file')).toBe('destructive')
+    expect(classifyBlastRadius('getUser')).toBe('read')
+  })
+  it('does not false-match substrings (reset, forget)', () => {
+    expect(classifyBlastRadius('reset_password')).toBe('unknown')
+    expect(classifyBlastRadius('forget_me')).toBe('unknown')
+  })
 })

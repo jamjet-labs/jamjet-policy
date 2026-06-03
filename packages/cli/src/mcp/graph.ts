@@ -25,7 +25,13 @@ export function mcpGraph(opts: McpGraphOptions): void {
   try {
     const policy = loadPolicy(opts.policyPath)
     for (const r of policy.rules) evaluator.add(r.action, r.match)
-  } catch {
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (opts.policyPath !== undefined) {
+      process.stderr.write(`error loading policy ${opts.policyPath}: ${msg}\n`)
+      process.exitCode = 1
+      return
+    }
     process.stderr.write('no policy found; showing all tools as allow\n')
   }
 
