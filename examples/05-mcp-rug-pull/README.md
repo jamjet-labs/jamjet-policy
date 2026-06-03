@@ -12,18 +12,11 @@ pnpm --filter @jamjet/mcp-shim build
 ```
 
 ## 2. Approve the clean server (writes ~/.jamjet/mcp-trust.lock)
-For this milestone there is no `jamjet mcp trust approve` CLI yet (follow-on
-plan), so seed the baseline from a Node one-liner using the published helpers:
 ```bash
-node --input-type=module -e '
-import { loadTrustBaseline, approveServer, saveTrustBaseline, defaultTrustLockPath } from "@jamjet/mcp-threat";
-const tools=[{name:"read_file",description:"Read a file from disk.",inputSchema:{type:"object",properties:{path:{type:"string"}}}}];
-let b=loadTrustBaseline();
-b=approveServer(b,"demo-fs","id:demo-fs",tools,new Date().toISOString());
-saveTrustBaseline(defaultTrustLockPath(),b);
-console.log("approved demo-fs in",defaultTrustLockPath());
-'
+jamjet mcp trust approve demo-fs -- node examples/05-mcp-rug-pull/drifting-server.mjs
+jamjet mcp trust review
 ```
+This launches the server in its clean state, pins `read_file`'s definition, and shows the approval. (Run without `JJ_DEMO_DRIFT` so the approved baseline is the honest one.)
 
 ## 3. Run the shim in front of the DRIFTED server and call the tool
 ```bash
