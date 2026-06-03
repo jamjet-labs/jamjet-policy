@@ -49,6 +49,9 @@ importers:
       '@jamjet/cloud':
         specifier: ^0.3.0
         version: 0.3.0
+      '@jamjet/mcp-threat':
+        specifier: workspace:*
+        version: link:../mcp-threat
       better-sqlite3:
         specifier: ^11.5.0
         version: 11.10.0
