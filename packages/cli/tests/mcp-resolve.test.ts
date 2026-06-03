@@ -52,4 +52,12 @@ describe('resolveServerCommand', () => {
       resolveServerCommand('fs', undefined, { projectConfig: proj, userConfig: join(dir, 'u.json') }),
     ).toThrow(/bad\.json/)
   })
+
+  it('treats an array mcpServers value as missing (not found)', () => {
+    const proj = join(dir, 'arr.json')
+    writeFileSync(proj, JSON.stringify({ mcpServers: [{ command: 'node' }] }))
+    expect(() =>
+      resolveServerCommand('fs', undefined, { projectConfig: proj, userConfig: join(dir, 'u.json') }),
+    ).toThrow(/not found/)
+  })
 })

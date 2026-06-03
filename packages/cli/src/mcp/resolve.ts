@@ -33,7 +33,7 @@ function readMcpServers(path: string): Record<string, McpServerEntry> | null {
     throw new Error(`malformed MCP config at ${path}: ${(e as Error).message}`)
   }
   const servers = (parsed as { mcpServers?: unknown }).mcpServers
-  if (servers && typeof servers === 'object') return servers as Record<string, McpServerEntry>
+  if (servers && typeof servers === 'object' && !Array.isArray(servers)) return servers as Record<string, McpServerEntry>
   return {}
 }
 
@@ -57,5 +57,5 @@ export function resolveServerCommand(
       return { command: entry.command, args: entry.args ?? [], env: entry.env ?? {} }
     }
   }
-  throw new Error(`server '${name}' not found in ./.mcp.json or ~/.mcp.json; pass -- <cmd> <args>`)
+  throw new Error(`server '${name}' not found in ${projectPath} or ${userPath}; pass -- <cmd> <args>`)
 }

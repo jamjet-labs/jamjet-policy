@@ -43,6 +43,14 @@ describe('trustReview', () => {
     expect(text).toMatch(/read_file, list_dir/)
   })
 
+  it('renders a zero-tool server without a trailing colon', async () => {
+    const lockPath = join(dir, 'mcp-trust.lock')
+    await trustApprove({ name: 'empty', command: 'node', args: [], env: {}, lockPath, probe: async () => [] })
+    const out = vi.spyOn(process.stdout, 'write').mockReturnValue(true)
+    trustReview({ lockPath })
+    expect(out.mock.calls.join('')).toMatch(/0 tools\n/)
+  })
+
   it('--json emits the lock as JSON', async () => {
     const lockPath = join(dir, 'mcp-trust.lock')
     await trustApprove({

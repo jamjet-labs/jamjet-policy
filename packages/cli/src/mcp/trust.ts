@@ -31,7 +31,8 @@ export function trustReview(opts: TrustReviewOptions = {}): void {
     const toolNames = Object.keys(server.tools)
     const shortFp = server.fingerprint.slice(0, 17)
     process.stdout.write(`${name}  (${shortFp}…)  approved ${server.approved_at}\n`)
-    process.stdout.write(`  ${toolNames.length} tool${toolNames.length === 1 ? '' : 's'}: ${toolNames.join(', ')}\n`)
+    const toolList = toolNames.length > 0 ? `: ${toolNames.join(', ')}` : ''
+    process.stdout.write(`  ${toolNames.length} tool${toolNames.length === 1 ? '' : 's'}${toolList}\n`)
   }
 }
 

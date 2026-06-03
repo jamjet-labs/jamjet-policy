@@ -49,6 +49,10 @@ export function probeServerTools(opts: ProbeOptions): Promise<ToolDefinition[]> 
       finish(() => reject(new Error(msg)))
     })
 
+    child.on('close', (code) => {
+      finish(() => reject(new Error(`server exited with code ${code ?? 'unknown'} before responding to tools/list`)))
+    })
+
     const send = (obj: unknown): void => { stdin.write(JSON.stringify(obj) + '\n') }
 
     function handleLine(line: string): void {
