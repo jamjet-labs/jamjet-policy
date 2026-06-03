@@ -35,6 +35,7 @@ export function renderMermaid(graph: CapabilityGraph): string {
       lines.push(`  ${sid} --> ${tid}["${escapeMermaid(tool.name)}<br/>${tool.decision}${risk}"]`)
     })
   })
+  if (graph.withRisk) lines.push(`%% ${RISK_LEGEND}`)
   return lines.join('\n')
 }
 

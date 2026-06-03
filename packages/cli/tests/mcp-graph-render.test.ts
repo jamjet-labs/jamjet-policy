@@ -46,6 +46,12 @@ describe('renderMermaid', () => {
     expect(out.startsWith('flowchart LR')).toBe(true)
     expect(out).toContain('S0 --> S0T0')
     expect(out).toContain('read_file')
+    expect(out).not.toContain('heuristic name-pattern')
+  })
+  it('includes the risk legend as a comment in mermaid when withRisk', () => {
+    const out = renderMermaid(graphRisk)
+    expect(out).toContain('heuristic name-pattern')
+    expect(out).toContain('/ destructive')
   })
   it('neutralizes quotes and newlines in names', () => {
     const g: CapabilityGraph = {

@@ -30,10 +30,10 @@ Cloud Sync:
   jamjet sync verify <YYYY-MM-DD>
   jamjet sync stop
 
-MCP trust:
+MCP:
   jamjet mcp trust review [--json]
   jamjet mcp trust approve <name> [-- <cmd> <args...>]
-  jamjet mcp graph [--risk] [--format text|mermaid|json]
+  jamjet mcp graph [--risk] [--format text|mermaid|json] [--lock <path>] [--policy <path>]
 
 Misc:
   jamjet --version
