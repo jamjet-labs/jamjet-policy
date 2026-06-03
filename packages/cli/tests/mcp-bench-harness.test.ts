@@ -28,5 +28,15 @@ describe('runBench', () => {
     expect(p.p95).toBeLessThanOrEqual(p.p99)
     expect(Number.isFinite(p.mean)).toBe(true)
     expect(p.p50).toBeGreaterThanOrEqual(0)
+    expect(p.mean).toBeGreaterThan(0)
+  })
+
+  it('still measures (no silent zeros) when iterations < batch', () => {
+    let calls = 0
+    const fn = (): void => { calls += 1 }
+    const p = runBench(fn, { iterations: 50, batch: 100, warmup: 0 })
+    expect(calls).toBe(50)          // effectiveBatch clamps to 50, 1 sample
+    expect(p.mean).toBeGreaterThan(0)
+    expect(p.p50).toBeGreaterThan(0)
   })
 })

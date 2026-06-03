@@ -31,13 +31,17 @@ export interface RunBenchOptions {
 export function runBench(fn: () => void, opts: RunBenchOptions): Percentiles {
   const { iterations, batch, warmup } = opts
   for (let i = 0; i < warmup; i += 1) fn()
-  const samples = Math.floor(iterations / batch)
+  // Clamp so a tiny `iterations` still yields a real measurement instead of a
+  // silent all-zero result. Tiny runs give few samples (low statistical value),
+  // but never zero.
+  const effectiveBatch = Math.max(1, Math.min(batch, iterations))
+  const samples = Math.max(1, Math.floor(iterations / effectiveBatch))
   const perOp: number[] = []
   for (let s = 0; s < samples; s += 1) {
     const start = process.hrtime.bigint()
-    for (let b = 0; b < batch; b += 1) fn()
+    for (let b = 0; b < effectiveBatch; b += 1) fn()
     const end = process.hrtime.bigint()
-    perOp.push(Number(end - start) / batch)
+    perOp.push(Number(end - start) / effectiveBatch)
   }
   return percentiles(perOp)
 }
