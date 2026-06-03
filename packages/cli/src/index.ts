@@ -9,6 +9,7 @@ import { syncVerify } from './sync/verify.js'
 import { syncInstall } from './sync/install.js'
 import { resolveServerCommand } from './mcp/resolve.js'
 import { trustReview, trustApprove } from './mcp/trust.js'
+import { mcpGraph, type GraphFormat } from './mcp/graph.js'
 
 const VERSION = '0.2.0'
 
@@ -32,6 +33,7 @@ Cloud Sync:
 MCP trust:
   jamjet mcp trust review [--json]
   jamjet mcp trust approve <name> [-- <cmd> <args...>]
+  jamjet mcp graph [--risk] [--format text|mermaid|json]
 
 Misc:
   jamjet --version
@@ -194,6 +196,22 @@ async function main(): Promise<void> {
     }
     process.stderr.write('Usage: jamjet mcp trust review|approve\n')
     process.exitCode = 64
+    return
+  }
+
+  if (cmd === 'mcp' && sub === 'graph') {
+    const fmt = getFlag(rest, '--format') ?? 'text'
+    if (fmt !== 'text' && fmt !== 'mermaid' && fmt !== 'json') {
+      process.stderr.write('Usage: jamjet mcp graph [--risk] [--format text|mermaid|json]\n')
+      process.exitCode = 64
+      return
+    }
+    mcpGraph({
+      format: fmt as GraphFormat,
+      risk: hasFlag(rest, '--risk'),
+      lockPath: getFlag(rest, '--lock'),
+      policyPath: getFlag(rest, '--policy'),
+    })
     return
   }
 
