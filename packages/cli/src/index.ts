@@ -7,6 +7,8 @@ import { Daemon } from './sync/daemon.js'
 import { syncStatus } from './sync/status.js'
 import { syncVerify } from './sync/verify.js'
 import { syncInstall } from './sync/install.js'
+import { resolveServerCommand } from './mcp/resolve.js'
+import { trustReview, trustApprove } from './mcp/trust.js'
 
 const VERSION = '0.2.0'
 
@@ -27,6 +29,10 @@ Cloud Sync:
   jamjet sync verify <YYYY-MM-DD>
   jamjet sync stop
 
+MCP trust:
+  jamjet mcp trust review [--json]
+  jamjet mcp trust approve <name> [-- <cmd> <args...>]
+
 Misc:
   jamjet --version
   jamjet --help
@@ -41,6 +47,12 @@ function getFlag(args: string[], name: string): string | undefined {
 
 function hasFlag(args: string[], name: string): boolean {
   return args.includes(name)
+}
+
+function splitOnDoubleDash(args: string[]): { before: string[]; after: string[] | undefined } {
+  const i = args.indexOf('--')
+  if (i < 0) return { before: args, after: undefined }
+  return { before: args.slice(0, i), after: args.slice(i + 1) }
 }
 
 const argv = process.argv.slice(2)
@@ -159,6 +171,29 @@ async function main(): Promise<void> {
       return
     }
     process.stdout.write(`sent SIGTERM to pid ${info.pid}\n`)
+    return
+  }
+
+  if (cmd === 'mcp' && sub === 'trust') {
+    const action = rest[0]
+    if (action === 'review') {
+      trustReview({ json: hasFlag(rest, '--json') })
+      return
+    }
+    if (action === 'approve') {
+      const { before, after } = splitOnDoubleDash(rest.slice(1))
+      const name = before[0]
+      if (!name) {
+        process.stderr.write('Usage: jamjet mcp trust approve <name> [-- <cmd> <args...>]\n')
+        process.exitCode = 64
+        return
+      }
+      const resolved = resolveServerCommand(name, after)
+      await trustApprove({ name, command: resolved.command, args: resolved.args, env: resolved.env })
+      return
+    }
+    process.stderr.write('Usage: jamjet mcp trust review|approve\n')
+    process.exitCode = 64
     return
   }
 
