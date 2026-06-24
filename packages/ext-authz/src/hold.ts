@@ -32,7 +32,7 @@ export function createHoldStore(dir: string): HoldStore {
   return {
     hold(action, now) {
       const h = actionHash(action)
-      const runId = `run_${h.slice(7, 19)}` // strip "sha256:" prefix; deterministic per action
+      const runId = `run_${h.slice(7, 39)}` // strip "sha256:" prefix; deterministic per action; 128-bit width
       const existing = read(runId)
       if (existing) return existing
       const rec: HoldRecord = { run_id: runId, action_hash: h, tool: action.tool, created_at: now, status: 'pending' }
@@ -40,7 +40,7 @@ export function createHoldStore(dir: string): HoldStore {
       return rec
     },
     find(action) {
-      return read(`run_${actionHash(action).slice(7, 19)}`)
+      return read(`run_${actionHash(action).slice(7, 39)}`)
     },
     peek(runId) {
       return read(runId)?.status ?? 'unknown'

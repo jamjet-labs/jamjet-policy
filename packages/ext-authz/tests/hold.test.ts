@@ -31,4 +31,7 @@ describe('createHoldStore', () => {
   it('peeks unknown for an unseen runId', () => {
     expect(createHoldStore(dir).peek('run_nope')).toBe('unknown')
   })
+  it('resolve returns false for a missing runId', () => {
+    expect(createHoldStore(dir).resolve('run_nope', 'approved')).toBe(false)
+  })
 })
