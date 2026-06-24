@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildEvaluator } from '../src/policy.js'
 import { handleAuthz, type AuthzDeps } from '../src/handle.js'
-import { mkdtempSync as mkdtempSync2 } from 'node:fs'
 import { createHoldStore } from '../src/hold.js'
 import { handleAuthzWithHold, type AuthzDepsV2 } from '../src/handle.js'
 
@@ -46,7 +45,7 @@ describe('handleAuthzWithHold (approval bridge)', () => {
     return JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: tool, arguments: { amt: 1 } } })
   }
   function freshDeps(): AuthzDepsV2 {
-    const dir = mkdtempSync2(join(tmpdir(), 'extauthz-bridge-'))
+    const dir = mkdtempSync(join(tmpdir(), 'extauthz-bridge-'))
     const policyPath = join(dir, 'policy.yaml')
     writeFileSync(policyPath, 'version: 1\nrules:\n  - match: "payments.*"\n    action: require_approval\n', 'utf-8')
     return {
@@ -81,5 +80,13 @@ describe('handleAuthzWithHold (approval bridge)', () => {
     deps.holds.resolve(first.headers['x-jamjet-approval-id']!, 'rejected')
     const retry = handleAuthzWithHold(rpc2('payments.transfer'), {}, deps)
     expect(retry.status).toBe(403)
+  })
+
+  it('re-issues the same step-up 403 while still pending', () => {
+    const deps = freshDeps()
+    const first = handleAuthzWithHold(rpc2('payments.transfer'), {}, deps)
+    const retry = handleAuthzWithHold(rpc2('payments.transfer'), {}, deps)
+    expect(retry.status).toBe(403)
+    expect(retry.headers['x-jamjet-approval-id']).toBe(first.headers['x-jamjet-approval-id'])
   })
 })

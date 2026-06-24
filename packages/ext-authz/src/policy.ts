@@ -17,6 +17,9 @@ export function decidePolicy(evaluator: PolicyEvaluator, action: AuthzAction): P
     case 'require_approval':
       return { kind: 'PENDING', matchedPattern: d.pattern }
     default:
+      // 'allow' and 'audit' both resolve to ALLOW. A receipt is emitted for every
+      // decision by the handler, so 'audit' (allow + record) is satisfied by the
+      // always-on receipt; there is no separate audit verdict.
       return { kind: 'ALLOW', matchedPattern: d.pattern }
   }
 }

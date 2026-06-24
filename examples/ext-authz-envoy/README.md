@@ -14,7 +14,12 @@ from Envoy to agentgateway with no change to policy or receipts.
 
 ## Approval bridge (M2)
 
-1. Add a held rule to policy.yaml: a rule `- match: "payments.*"\n  action: require_approval`.
+1. Add a held rule to policy.yaml:
+   ```yaml
+   rules:
+     - match: "payments.*"
+       action: require_approval
+   ```
 2. `curl` a `payments.transfer` tools/call -> expect 403 with `WWW-Authenticate: insufficient_scope`
    and an `x-jamjet-approval-id`.
 3. Approve out of band: `node packages/ext-authz/dist/bin.js approve <runId>`.

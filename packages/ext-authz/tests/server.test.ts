@@ -45,6 +45,27 @@ describe('createServer', () => {
   })
 })
 
+describe('server error boundary', () => {
+  it('returns 500 when the handler throws', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'extauthz-err-'))
+    const policyPath = join(dir, 'policy.yaml')
+    writeFileSync(policyPath, 'version: 1\nrules:\n  - match: "search"\n    action: allow\n', 'utf-8')
+    const srv = createServer({
+      evaluator: buildEvaluator(policyPath),
+      auditPath: join(dir, 'r.jsonl'),
+      now: () => { throw new Error('boom') },
+      defaultServer: 'mcp',
+      holds: mkHolds(join(dir, 'holds')),
+      approvalBaseUrl: 'http://x/approve',
+    })
+    await new Promise<void>((r) => srv.listen(0, r))
+    const p = (srv.address() as AddressInfo).port
+    const res = await fetch(`http://127.0.0.1:${p}/`, { method: 'POST', body: JSON.stringify({ method: 'tools/call', params: { name: 'search', arguments: {} } }) })
+    expect(res.status).toBe(500)
+    srv.close()
+  })
+})
+
 describe('server approval flow', () => {
   it('holds then allows after out-of-band approval', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'extauthz-srvapr-'))
