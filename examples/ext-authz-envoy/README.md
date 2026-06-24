@@ -11,3 +11,12 @@ and mints a receipt per decision.
 agentgateway follow-up: agentgateway's `extAuthz` targets the Envoy ext_authz
 *gRPC* contract first; once the gRPC adapter (separate plan) lands, swap the proxy
 from Envoy to agentgateway with no change to policy or receipts.
+
+## Approval bridge (M2)
+
+1. Add a held rule to policy.yaml: a rule `- match: "payments.*"\n  action: require_approval`.
+2. `curl` a `payments.transfer` tools/call -> expect 403 with `WWW-Authenticate: insufficient_scope`
+   and an `x-jamjet-approval-id`.
+3. Approve out of band: `node packages/ext-authz/dist/bin.js approve <runId>`.
+4. Retry the same `curl` -> expect 200, and a receipt with `policy.decision = ALLOWED`
+   plus an `approval` block chaining the run id.
