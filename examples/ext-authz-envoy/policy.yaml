@@ -1,0 +1,6 @@
+version: 1
+rules:
+  - match: "delete_*"
+    action: block
+  - match: "search"
+    action: allow
