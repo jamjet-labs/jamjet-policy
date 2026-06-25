@@ -89,4 +89,21 @@ describe('handleAuthzWithHold (approval bridge)', () => {
     expect(retry.status).toBe(403)
     expect(retry.headers['x-jamjet-approval-id']).toBe(first.headers['x-jamjet-approval-id'])
   })
+
+  it('consumes the approval — replaying the same approved call is denied again', () => {
+    const deps = freshDeps()
+    const first = handleAuthzWithHold(rpc2('payments.transfer'), {}, deps)
+    const runId = first.headers['x-jamjet-approval-id']!
+    deps.holds.resolve(runId, 'approved')
+    expect(handleAuthzWithHold(rpc2('payments.transfer'), {}, deps).status).toBe(200) // one allowed execution
+    const replay = handleAuthzWithHold(rpc2('payments.transfer'), {}, deps)
+    expect(replay.status).toBe(403) // approval consumed -> back to step-up
+    expect(replay.headers['x-jamjet-approval-id']).toBe(runId) // same deterministic id, fresh pending hold
+  })
+
+  it('fails closed (403) when the body was truncated (x-envoy-auth-partial-body)', () => {
+    const res = handleAuthzWithHold(rpc2('payments.transfer'), { 'x-envoy-auth-partial-body': 'true' }, freshDeps())
+    expect(res.status).toBe(403)
+    expect(res.body).toContain('partial_body_denied')
+  })
 })

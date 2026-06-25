@@ -20,11 +20,27 @@ function deny403(reason: string, receipt: PolicyReceipt): AuthzHttpResult {
   }
 }
 
+// Envoy sets x-envoy-auth-partial-body: true when the request body was truncated at
+// max_request_bytes before reaching this PDP. We cannot trust a truncated body to
+// reflect the real tool call, so we fail closed rather than evaluate a prefix.
+function isPartialBody(headers: Record<string, string | undefined>): boolean {
+  return headers['x-envoy-auth-partial-body'] === 'true'
+}
+
+function denyPartial(): AuthzHttpResult {
+  return { status: 403, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error: 'partial_body_denied' }) }
+}
+
 export function handleAuthz(
   rawBody: string,
   headers: Record<string, string | undefined>,
   deps: AuthzDeps,
 ): AuthzHttpResult {
+  if (isPartialBody(headers)) return denyPartial()
+  // A non-tools/call MCP method (initialize, tools/list, notifications, ping) or a body
+  // that is not a tool call passes through: this PDP governs tool execution, and the
+  // upstream MCP server rejects anything it cannot parse. Use a strict, tools/call-only
+  // proxy route if you need every payload to fail closed.
   const action = parseAction(rawBody, headers, deps.defaultServer)
   if (!action) return { status: 200, headers: {}, body: '' }
 
@@ -42,6 +58,11 @@ export interface AuthzDepsV2 extends AuthzDeps {
   approvalBaseUrl: string
 }
 
+// The runId is a deterministic, internal lookup key (a slice of the action hash), NOT a
+// bearer token: approving requires CLI/filesystem access to the hold store, so its
+// predictability is not itself a capability. `approval_url` targets a hosted approval
+// endpoint (the Enterprise Gateway / Cloud); that web UI MUST mint its own random nonce
+// rather than reuse this key. `approve_with` is the working path for the local CLI flow.
 function stepUpChallenge(runId: string, approvalBaseUrl: string): AuthzHttpResult {
   const url = `${approvalBaseUrl}/${runId}`
   return {
@@ -53,7 +74,12 @@ function stepUpChallenge(runId: string, approvalBaseUrl: string): AuthzHttpResul
       'retry-after': '5',
       'content-type': 'application/json',
     },
-    body: JSON.stringify({ error: 'approval_required', approval_id: runId, approval_url: url }),
+    body: JSON.stringify({
+      error: 'approval_required',
+      approval_id: runId,
+      approval_url: url,
+      approve_with: `jamjet-ext-authz approve ${runId}`,
+    }),
   }
 }
 
@@ -62,6 +88,7 @@ export function handleAuthzWithHold(
   headers: Record<string, string | undefined>,
   deps: AuthzDepsV2,
 ): AuthzHttpResult {
+  if (isPartialBody(headers)) return denyPartial()
   const action = parseAction(rawBody, headers, deps.defaultServer)
   if (!action) return { status: 200, headers: {}, body: '' }
 
@@ -85,6 +112,9 @@ export function handleAuthzWithHold(
     if (status === 'approved') {
       const receipt = buildPolicyReceipt(action, 'ALLOWED', verdict.matchedPattern, deps.now(), { run_id: existing.run_id, status: 'approved' })
       appendReceipt(deps.auditPath, receipt)
+      // Single-use: consume the approval so the exact same action cannot be replayed.
+      // A later identical request finds no hold, re-enters PENDING, and must be re-approved.
+      deps.holds.consume(existing.run_id)
       return { status: 200, headers: { 'x-jamjet-receipt': receipt.receipt_hash }, body: '' }
     }
     if (status === 'rejected') {

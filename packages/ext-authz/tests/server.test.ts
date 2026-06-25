@@ -66,6 +66,28 @@ describe('server error boundary', () => {
   })
 })
 
+describe('server body limit', () => {
+  it('rejects an oversized body with 413', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'extauthz-big-'))
+    const policyPath = join(dir, 'policy.yaml')
+    writeFileSync(policyPath, 'version: 1\nrules:\n  - match: "search"\n    action: allow\n', 'utf-8')
+    const srv = createServer({
+      evaluator: buildEvaluator(policyPath),
+      auditPath: join(dir, 'r.jsonl'),
+      now: () => '2026-06-24T00:00:00.000Z',
+      defaultServer: 'mcp',
+      holds: mkHolds(join(dir, 'holds')),
+      approvalBaseUrl: 'http://x/approve',
+    })
+    await new Promise<void>((r) => srv.listen(0, r))
+    const p = (srv.address() as AddressInfo).port
+    const huge = 'x'.repeat(1024 * 1024 + 1024) // just over the 1 MiB cap
+    const res = await fetch(`http://127.0.0.1:${p}/`, { method: 'POST', body: huge })
+    expect(res.status).toBe(413)
+    srv.close()
+  })
+})
+
 describe('server approval flow', () => {
   it('holds then allows after out-of-band approval', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'extauthz-srvapr-'))

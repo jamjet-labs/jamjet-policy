@@ -16,10 +16,16 @@ export function decidePolicy(evaluator: PolicyEvaluator, action: AuthzAction): P
       return { kind: 'BLOCK', matchedPattern: d.pattern, reason: `tool '${action.tool}' matches blocked pattern '${d.pattern ?? '*'}'` }
     case 'require_approval':
       return { kind: 'PENDING', matchedPattern: d.pattern }
-    default:
-      // 'allow' and 'audit' both resolve to ALLOW. A receipt is emitted for every
-      // decision by the handler, so 'audit' (allow + record) is satisfied by the
-      // always-on receipt; there is no separate audit verdict.
+    case 'allow':
+    case 'audit':
+      // 'allow' (including the no-rule-matched default) and 'audit' both resolve to
+      // ALLOW. A receipt is emitted for every decision by the handler, so 'audit'
+      // (allow + record) is satisfied by the always-on receipt; there is no separate
+      // audit verdict.
       return { kind: 'ALLOW', matchedPattern: d.pattern }
+    default:
+      // Fail closed: an unrecognized policyKind (a future @jamjet/cloud action or a
+      // typo) must never silently authorize. Block it.
+      return { kind: 'BLOCK', matchedPattern: d.pattern, reason: `unrecognized policy kind '${String(d.policyKind)}' — failing closed` }
   }
 }

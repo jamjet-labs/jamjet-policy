@@ -33,4 +33,16 @@ describe('decidePolicy', () => {
     const v = decidePolicy(buildEvaluator(policyPath), action('search'))
     expect(v.kind).toBe('ALLOW')
   })
+  it('allows a tool matching an audit rule', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'extauthz-policy-audit-'))
+    const p = join(dir, 'policy.yaml')
+    writeFileSync(p, 'version: 1\nrules:\n  - match: "log_*"\n    action: audit\n', 'utf-8')
+    expect(decidePolicy(buildEvaluator(p), action('log_event')).kind).toBe('ALLOW')
+  })
+  it('fails closed (BLOCK) for an unrecognized policyKind', () => {
+    const fakeEvaluator = {
+      evaluate: () => ({ blocked: false, policyKind: 'mystery', pattern: null, toolName: 'x' }),
+    } as unknown as Parameters<typeof decidePolicy>[0]
+    expect(decidePolicy(fakeEvaluator, action('whatever')).kind).toBe('BLOCK')
+  })
 })
