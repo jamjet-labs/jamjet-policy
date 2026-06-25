@@ -21,6 +21,10 @@ static_resources:
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
                       transport_api_version: V3
+                      # allow_partial_message:true lets Envoy forward a truncated body (>8KB) with
+                      # x-envoy-auth-partial-body:true. The PDP fails closed on that header, so a
+                      # truncated tool call is denied, not evaluated on a prefix. Raise max_request_bytes
+                      # if your tool arguments are legitimately larger than 8KB.
                       with_request_body: { max_request_bytes: 8192, allow_partial_message: true }
                       http_service:
                         server_uri:

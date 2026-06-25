@@ -34,4 +34,20 @@ describe('createHoldStore', () => {
   it('resolve returns false for a missing runId', () => {
     expect(createHoldStore(dir).resolve('run_nope', 'approved')).toBe(false)
   })
+  it('consume deletes an approved hold so it cannot be replayed', () => {
+    const store = createHoldStore(dir)
+    const rec = store.hold(action, 'now')
+    store.resolve(rec.run_id, 'approved')
+    expect(store.consume(rec.run_id)).toBe(true)
+    expect(store.peek(rec.run_id)).toBe('unknown')
+    expect(store.find(action)).toBeNull()
+    expect(store.consume(rec.run_id)).toBe(false) // already gone
+  })
+  it('rejects path-traversal runIds (no write/read outside dir)', () => {
+    const store = createHoldStore(dir)
+    expect(store.peek('../../etc/passwd')).toBe('unknown')
+    expect(store.resolve('../../tmp/evil', 'approved')).toBe(false)
+    expect(store.consume('../../tmp/evil')).toBe(false)
+    expect(store.peek('run_' + 'a'.repeat(32))).toBe('unknown') // well-formed but absent
+  })
 })
