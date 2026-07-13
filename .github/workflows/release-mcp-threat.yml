@@ -1,0 +1,59 @@
+name: Release @jamjet/mcp-threat
+
+on:
+  push:
+    tags:
+      - 'mcp-threat-v*'
+
+jobs:
+  publish:
+    name: Publish @jamjet/mcp-threat
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    defaults:
+      run:
+        working-directory: packages/mcp-threat
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm/action-setup with no `version:` reads "packageManager" from the
+      # root package.json. Avoids ERR_PNPM_BAD_PM_VERSION.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+          registry-url: 'https://registry.npmjs.org'
+
+      # Literal, unnormalized compare: tag mcp-threat-vX must equal package.json
+      # version X character for character.
+      - name: Gate tag against package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#mcp-threat-v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Tag version '$TAG_VERSION' != package.json version '$PKG_VERSION'"
+            exit 1
+          fi
+
+      - name: Install
+        run: cd ../.. && pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Test
+        run: pnpm test
+
+      - name: Publish to npm with provenance
+        # --provenance works because jamjet-policy is public.
+        run: npx npm@latest publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

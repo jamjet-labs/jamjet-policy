@@ -1,0 +1,69 @@
+name: Release @jamjet/ext-authz
+
+on:
+  push:
+    tags:
+      - 'ext-authz-v*'
+
+jobs:
+  publish:
+    name: Publish @jamjet/ext-authz
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    defaults:
+      run:
+        working-directory: packages/ext-authz
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm/action-setup with no `version:` reads "packageManager" from the
+      # root package.json. Avoids ERR_PNPM_BAD_PM_VERSION.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+          registry-url: 'https://registry.npmjs.org'
+
+      # Literal, unnormalized compare: tag ext-authz-vX must equal package.json
+      # version X character for character.
+      - name: Gate tag against package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#ext-authz-v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Tag version '$TAG_VERSION' != package.json version '$PKG_VERSION'"
+            exit 1
+          fi
+
+      # The published manifest must not carry the workspace: protocol. npm does
+      # not rewrite it, so a workspace: range here would break installs.
+      - name: Gate against workspace protocol in dependencies
+        run: |
+          if node -p "JSON.stringify(require('./package.json').dependencies)" | grep -q 'workspace:'; then
+            echo "dependencies contain a workspace: range; pin to a published version first"
+            exit 1
+          fi
+
+      - name: Install
+        run: cd ../.. && pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # Build BEFORE Test — integration tests spawn `dist/bin.js`.
+      - name: Build
+        run: pnpm build
+
+      - name: Test
+        run: pnpm test
+
+      - name: Publish to npm with provenance
+        # --provenance works because jamjet-policy is public.
+        run: npx npm@latest publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
