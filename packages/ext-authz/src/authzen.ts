@@ -62,7 +62,8 @@ function evaluateOne(action: AuthzAction, deps: AuthzDepsV2): AuthZenDecision {
   if (verdict.kind === 'BLOCK') {
     const receipt = buildPolicyReceipt(action, 'BLOCKED', verdict.matchedPattern, deps.now())
     appendReceipt(deps.auditPath, receipt)
-    return { decision: false, context: { reason_user: verdict.reason, receipt: receipt.receipt_hash } }
+    // MCP profile §5.2.2: a PEP surfaces the deny reason from context.reason.
+    return { decision: false, context: { reason: verdict.reason, receipt: receipt.receipt_hash } }
   }
   if (verdict.kind === 'ALLOW') {
     const receipt = buildPolicyReceipt(action, 'ALLOWED', verdict.matchedPattern, deps.now())
@@ -152,10 +153,17 @@ const MAX_BATCH_EVALUATIONS = 64
 
 export function handleAuthZen(
   path: string,
+  method: string,
   rawBody: string,
   headers: Record<string, string | undefined>,
   deps: AuthzDepsV2,
 ): AuthzHttpResult {
+  // Both AuthZen endpoints are POST-only. Refuse other methods before any parsing or
+  // side effect so a GET/PUT carrying a body is never evaluated.
+  if (method.toUpperCase() !== 'POST') {
+    return respond(405, { error: 'method_not_allowed' }, headers)
+  }
+
   let parsed: unknown
   try {
     parsed = JSON.parse(rawBody)
@@ -171,20 +179,26 @@ export function handleAuthZen(
   }
 
   if (path === AUTHZEN_EVALUATIONS_PATH) {
-    const items = parsed.evaluations
-    if (!Array.isArray(items) || items.length === 0) {
-      return respond(400, { error: 'invalid_request', detail: 'evaluations must be a non-empty array' }, headers)
+    const rawItems = parsed.evaluations
+    // Spec: an absent or empty evaluations array behaves as a single Access Evaluation
+    // over the top-level fields, returning the single-eval shape.
+    if (rawItems === undefined || (Array.isArray(rawItems) && rawItems.length === 0)) {
+      const action = parseEvaluation(parsed, deps.defaultServer)
+      if (typeof action === 'string') return respond(400, { error: 'invalid_request', detail: action }, headers)
+      return respond(200, evaluateOne(action, deps), headers)
     }
-    if (items.length > MAX_BATCH_EVALUATIONS) {
+    if (!Array.isArray(rawItems)) {
+      return respond(400, { error: 'invalid_request', detail: 'evaluations must be an array' }, headers)
+    }
+    if (rawItems.length > MAX_BATCH_EVALUATIONS) {
       return respond(400, { error: 'invalid_request', detail: `evaluations exceeds the maximum of ${MAX_BATCH_EVALUATIONS}` }, headers)
     }
-    const options = isPlainObject(parsed.options) ? parsed.options : {}
-    const semantic: EvaluationsSemantic = SEMANTICS.includes(options.evaluations_semantic as EvaluationsSemantic)
-      ? (options.evaluations_semantic as EvaluationsSemantic)
-      : 'execute_all'
 
-    const results: AuthZenDecision[] = []
-    for (const item of items) {
+    // Validate and merge EVERY item up front. A malformed item (a required attribute
+    // omitted after default-merge) is a Bad Request per spec, so the whole batch 400s
+    // before any receipt is minted or hold created — no partial side effects.
+    const actions: AuthzAction[] = []
+    for (const item of rawItems) {
       const merged: Record<string, unknown> = isPlainObject(item)
         ? {
             subject: item.subject ?? parsed.subject,
@@ -194,12 +208,20 @@ export function handleAuthZen(
           }
         : {}
       const action = parseEvaluation(merged, deps.defaultServer)
-      // Fail closed per item: a malformed entry is a deny with a reason, and the
-      // batch keeps its positional alignment with the request.
-      const result =
-        typeof action === 'string'
-          ? { decision: false, context: { reason_admin: `invalid evaluation: ${action}` } }
-          : evaluateOne(action, deps)
+      if (typeof action === 'string') {
+        return respond(400, { error: 'invalid_request', detail: `invalid evaluation: ${action}` }, headers)
+      }
+      actions.push(action)
+    }
+
+    const options = isPlainObject(parsed.options) ? parsed.options : {}
+    const semantic: EvaluationsSemantic = SEMANTICS.includes(options.evaluations_semantic as EvaluationsSemantic)
+      ? (options.evaluations_semantic as EvaluationsSemantic)
+      : 'execute_all'
+
+    const results: AuthZenDecision[] = []
+    for (const action of actions) {
+      const result = evaluateOne(action, deps)
       results.push(result)
       if (semantic === 'deny_on_first_deny' && !result.decision) break
       if (semantic === 'permit_on_first_permit' && result.decision) break

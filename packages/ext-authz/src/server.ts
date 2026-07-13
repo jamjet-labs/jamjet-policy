@@ -45,7 +45,7 @@ export function createServer(deps: AuthzDepsV2): Server {
         // HTTP ext_authz contract, so existing PEP configs are unaffected.
         const path = (req.url ?? '/').split('?')[0] ?? '/'
         const result = isAuthZenPath(path)
-          ? handleAuthZen(path, rawBody, headers, deps)
+          ? handleAuthZen(path, req.method ?? 'POST', rawBody, headers, deps)
           : handleAuthzWithHold(rawBody, headers, deps)
         res.writeHead(result.status, result.headers)
         res.end(result.body)

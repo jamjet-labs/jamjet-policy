@@ -33,7 +33,7 @@ function evaluation(action: string, resourceProps?: Record<string, unknown>) {
 }
 
 function post(deps: AuthzDepsV2, path: string, body: string, headers: Record<string, string | undefined> = {}) {
-  const res = handleAuthZen(path, body, headers, deps)
+  const res = handleAuthZen(path, 'POST', body, headers, deps)
   return { ...res, json: res.body ? JSON.parse(res.body) : null }
 }
 
@@ -53,7 +53,8 @@ describe('single evaluation', () => {
     const r = post(deps, AUTHZEN_EVALUATION_PATH, evaluation('delete_user'))
     expect(r.status).toBe(200)
     expect(r.json.decision).toBe(false)
-    expect(String(r.json.context.reason_user ?? r.json.context.reason)).toMatch(/block/i)
+    // MCP profile: the deny reason a PEP surfaces comes from context.reason.
+    expect(String(r.json.context.reason)).toMatch(/block/i)
   })
 
   it('returns the receipt hash in the response context', () => {
@@ -154,6 +155,13 @@ describe('protocol details', () => {
     const r = post(deps, AUTHZEN_EVALUATION_PATH, evaluation('search'))
     expect(r.headers['content-type']).toBe('application/json')
   })
+
+  it('405 on a non-POST method (endpoints are POST-only)', () => {
+    const res = handleAuthZen(AUTHZEN_EVALUATION_PATH, 'GET', evaluation('search'), {}, deps)
+    expect(res.status).toBe(405)
+    // A GET carrying a body must not be evaluated.
+    expect(() => readFileSync(deps.auditPath, 'utf-8')).toThrow()
+  })
 })
 
 describe('server routing', () => {
@@ -204,6 +212,23 @@ describe('batch evaluations', () => {
     expect(r.json.evaluations[1].decision).toBe(false)
   })
 
+  it('overriding one field on an item inherits the others (no sibling wipe)', () => {
+    // Top-level action=delete_user (block). An item that overrides ONLY resource must
+    // still inherit the blocked action and deny — proving per-field, not whole-object, merge.
+    const body = JSON.stringify({
+      subject: { type: 'user', id: 'a' },
+      action: { name: 'delete_user' },
+      resource: { type: 'mcp_tool', id: 'delete_user' },
+      evaluations: [
+        { resource: { type: 'mcp_tool', id: 'other' } }, // inherits action delete_user -> deny
+        { action: { name: 'search' } }, // inherits subject/resource, overrides action -> allow
+      ],
+    })
+    const r = post(deps, AUTHZEN_EVALUATIONS_PATH, body)
+    expect(r.json.evaluations[0].decision).toBe(false)
+    expect(r.json.evaluations[1].decision).toBe(true)
+  })
+
   it('deny_on_first_deny stops evaluating after the first deny', () => {
     const r = post(deps, AUTHZEN_EVALUATIONS_PATH, batch(
       [{ action: { name: 'delete_user' } }, {}],
@@ -222,8 +247,48 @@ describe('batch evaluations', () => {
     expect(r.json.evaluations[0].decision).toBe(true)
   })
 
-  it('400 when evaluations is missing or empty', () => {
-    expect(post(deps, AUTHZEN_EVALUATIONS_PATH, batch([])).status).toBe(400)
+  it('empty or missing evaluations falls back to a single evaluation of the top-level (spec §)', () => {
+    // Spec: absent/empty evaluations behaves as the single Access Evaluation request —
+    // evaluate the top-level subject/action/resource once and return the SINGLE shape.
+    const body = JSON.stringify({
+      subject: { type: 'user', id: 'a' },
+      action: { name: 'delete_user' },
+      resource: { type: 'mcp_tool', id: 'delete_user' },
+      evaluations: [],
+    })
+    const r = post(deps, AUTHZEN_EVALUATIONS_PATH, body)
+    expect(r.status).toBe(200)
+    expect(r.json.decision).toBe(false) // top-level action delete_user is blocked
+    expect(r.json.evaluations).toBeUndefined()
+
+    // And with evaluations absent entirely.
+    const noKey = JSON.stringify({
+      subject: { type: 'user', id: 'a' },
+      action: { name: 'search' },
+      resource: { type: 'mcp_tool', id: 'search' },
+    })
+    const r2 = post(deps, AUTHZEN_EVALUATIONS_PATH, noKey)
+    expect(r2.json.decision).toBe(true)
+    expect(r2.json.evaluations).toBeUndefined()
+  })
+
+  it('400 when evaluations is absent AND the top-level is not a valid evaluation', () => {
+    const body = JSON.stringify({ subject: { type: 'user', id: 'a' } }) // no action/resource
+    expect(post(deps, AUTHZEN_EVALUATIONS_PATH, body).status).toBe(400)
+  })
+
+  it('400 (whole batch) when any item is malformed after default-merge (MUST bad-request)', () => {
+    // Spec: an omitted required attribute MUST be a Bad Request, not a soft deny.
+    const body = JSON.stringify({
+      subject: { type: 'user', id: 'a' },
+      // no top-level action, so an item without action cannot inherit one
+      resource: { type: 'mcp_tool', id: 'search' },
+      evaluations: [{ action: { name: 'search' } }, { resource: { type: 'mcp_tool', id: 'x' } }],
+    })
+    const r = post(deps, AUTHZEN_EVALUATIONS_PATH, body)
+    expect(r.status).toBe(400)
+    // Rejected before any side effect: no receipts written.
+    expect(() => readFileSync(deps.auditPath, 'utf-8')).toThrow()
   })
 
   it('400 when the batch exceeds the size cap (no receipt/hold write amplification)', () => {
