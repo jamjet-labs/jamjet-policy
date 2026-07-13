@@ -102,8 +102,8 @@ importers:
         specifier: ^0.3.1
         version: 0.3.1
       '@jamjet/mcp-threat':
-        specifier: workspace:*
-        version: link:../mcp-threat
+        specifier: ^0.1.0
+        version: 0.1.0
     devDependencies:
       '@types/node':
         specifier: ^20.0.0
@@ -515,6 +515,9 @@ packages:
         optional: true
       openai:
         optional: true
+
+  '@jamjet/mcp-threat@0.1.0':
+    resolution: {integrity: sha512-tfc0zACyyHZsq2kJM12lfcTEpIeEba3PZmHafLh2zbDY/t8r3N+Kf2Ftj27HbQO4FBXvb28V7QukR1qRdwp0zw==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -1756,6 +1759,10 @@ snapshots:
     dependencies:
       yaml: 2.9.0
       zod: 3.25.76
+
+  '@jamjet/mcp-threat@0.1.0':
+    dependencies:
+      yaml: 2.9.0
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
