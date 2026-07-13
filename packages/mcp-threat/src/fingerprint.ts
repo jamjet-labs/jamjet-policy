@@ -9,7 +9,12 @@ export function canonicalize(value: unknown): string {
 function sortValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortValue)
   if (value && typeof value === 'object') {
-    const out: Record<string, unknown> = {}
+    // Build on a null prototype so a "__proto__" own-property key (which JSON.parse
+    // produces as an own, enumerable key) is stored as data instead of invoking the
+    // Object.prototype __proto__ setter, which would silently drop it and collide the
+    // hash with a payload that lacks the key. JSON.stringify serializes null-prototype
+    // objects' own enumerable keys the same way.
+    const out = Object.create(null) as Record<string, unknown>
     for (const key of Object.keys(value as Record<string, unknown>).sort()) {
       out[key] = sortValue((value as Record<string, unknown>)[key])
     }
