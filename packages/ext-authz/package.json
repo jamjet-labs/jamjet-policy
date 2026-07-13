@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@jamjet/cloud": "^0.3.1",
-    "@jamjet/mcp-threat": "workspace:*"
+    "@jamjet/mcp-threat": "^0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.5.0",
