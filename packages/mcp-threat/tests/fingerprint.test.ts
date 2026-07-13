@@ -8,6 +8,31 @@ describe('canonicalize', () => {
   it('distinguishes different values', () => {
     expect(canonicalize({ a: 1 })).not.toBe(canonicalize({ a: 2 }))
   })
+
+  // Security: a __proto__ key arrives as an OWN property from JSON.parse. It must
+  // participate in the canonical form, not be silently dropped by a prototype setter —
+  // otherwise two materially different payloads collide to the same hash, which lets an
+  // approved single-use hold be consumed by a different real payload.
+  it('does not drop or collide on a __proto__ own-property key', () => {
+    const withProto = JSON.parse('{"amount":5,"__proto__":{"amount":9999}}')
+    const withoutProto = { amount: 5 }
+    expect(canonicalize(withProto)).not.toBe(canonicalize(withoutProto))
+
+    const emptyObj = {}
+    const protoOnly = JSON.parse('{"__proto__":{"x":1}}')
+    expect(canonicalize(protoOnly)).not.toBe(canonicalize(emptyObj))
+  })
+
+  it('canonicalizes __proto__ deterministically regardless of key order', () => {
+    const a = JSON.parse('{"__proto__":{"b":2,"a":1},"z":3}')
+    const b = JSON.parse('{"z":3,"__proto__":{"a":1,"b":2}}')
+    expect(canonicalize(a)).toBe(canonicalize(b))
+  })
+
+  it('does not pollute Object.prototype when canonicalizing a __proto__ payload', () => {
+    canonicalize(JSON.parse('{"__proto__":{"polluted":true}}'))
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+  })
 })
 
 describe('sha256Canonical', () => {

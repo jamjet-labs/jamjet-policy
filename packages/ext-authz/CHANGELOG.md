@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.0
+
+- OpenID AuthZen Authorization API 1.0 surface on the same PDP: `POST /access/v1/evaluation`
+  and `POST /access/v1/evaluations` (batch, all three `evaluations_semantic` options,
+  64-item cap). Deny is HTTP 200 with `decision: false`; the `require_approval` hold maps
+  to a deny whose `context` carries the approval id, URL, and status, and an approved hold
+  permits exactly once. Every decision mints the same AgentBoundary-family receipt as the
+  ext_authz path. Non-`/access/*` paths keep the Envoy HTTP ext_authz contract unchanged.
+- Conformance: an empty or absent `evaluations` array falls back to a single evaluation;
+  a block deny reason is carried in `context.reason`; a malformed batch item is a 400 for
+  the whole batch before any side effect; non-POST methods return 405.
+- Hardening: `__proto__`/`constructor`/`prototype` keys in tool arguments are rejected
+  (400); any `/access`-family path is routed case-insensitively so it cannot fall through
+  to the ext_authz passthrough.
+
 ## 0.1.0
 
 First published release.

@@ -1,0 +1,256 @@
+// OpenID AuthZen Authorization API 1.0 surface for the JamJet PDP, per the AuthZen
+// MCP profile: the MCP gateway/server is the PEP; this service is the PDP.
+// Single evaluation:  POST /access/v1/evaluation
+// Batch evaluations:  POST /access/v1/evaluations
+// A deny is HTTP 200 with { decision: false }; HTTP errors are reserved for malformed
+// requests (400) and server faults (500). The require_approval hold maps to a deny whose
+// context carries step-up instructions, which the AuthZen spec explicitly permits.
+import type { AuthzAction, AuthzHttpResult } from './types.js'
+import type { AuthzDepsV2 } from './handle.js'
+import { decidePolicy } from './policy.js'
+import { buildPolicyReceipt, appendReceipt } from './receipt.js'
+
+export const AUTHZEN_EVALUATION_PATH = '/access/v1/evaluation'
+export const AUTHZEN_EVALUATIONS_PATH = '/access/v1/evaluations'
+const AUTHZEN_PREFIX = '/access/'
+
+// Case-insensitive: any /access-family path (any casing) is claimed by the AuthZen PDP so
+// it can never fall through to the ext_authz handler, whose non-tools/call passthrough
+// (HTTP 200) would silently turn an AuthZen deny into an allow.
+export function isAuthZenPath(path: string): boolean {
+  return path.toLowerCase().startsWith(AUTHZEN_PREFIX)
+}
+
+// Keys that are never legitimate in agent-supplied tool arguments and only appear in
+// prototype-pollution attempts. Rejected outright, at any nesting depth.
+const FORBIDDEN_ARG_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+function hasForbiddenKey(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasForbiddenKey)
+  if (isPlainObject(value)) {
+    for (const key of Object.keys(value)) {
+      if (FORBIDDEN_ARG_KEYS.has(key)) return true
+      if (hasForbiddenKey(value[key])) return true
+    }
+  }
+  return false
+}
+
+interface AuthZenDecision {
+  decision: boolean
+  context: Record<string, unknown>
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+// Parse one AuthZen evaluation request (subject/action/resource[/context]) into the
+// policy-engine action. Returns a string error label on any shape violation: the caller
+// fails closed with a 400 rather than evaluating a guessed action.
+function parseEvaluation(req: Record<string, unknown>, defaultServer: string): AuthzAction | string {
+  const subject = req.subject
+  if (!isPlainObject(subject) || typeof subject.type !== 'string' || typeof subject.id !== 'string') {
+    return 'subject with string type and id is required'
+  }
+  const action = req.action
+  if (!isPlainObject(action) || typeof action.name !== 'string') {
+    return 'action with string name is required'
+  }
+  const resource = req.resource
+  if (!isPlainObject(resource) || typeof resource.type !== 'string' || typeof resource.id !== 'string') {
+    return 'resource with string type and id is required'
+  }
+
+  const props = isPlainObject(resource.properties) ? resource.properties : {}
+  let args: Record<string, unknown> = {}
+  if (props.arguments !== undefined) {
+    if (!isPlainObject(props.arguments)) return 'resource.properties.arguments must be an object'
+    if (hasForbiddenKey(props.arguments)) return 'arguments must not contain __proto__, constructor, or prototype keys'
+    args = props.arguments
+  }
+  const server = typeof props.server === 'string' ? props.server : defaultServer
+  return { server, tool: action.name, args }
+}
+
+// Same decision flow as the ext_authz handler (block / allow / hold with single-use
+// approval), rendered as an AuthZen decision instead of an HTTP status.
+function evaluateOne(action: AuthzAction, deps: AuthzDepsV2): AuthZenDecision {
+  const verdict = decidePolicy(deps.evaluator, action)
+
+  if (verdict.kind === 'BLOCK') {
+    const receipt = buildPolicyReceipt(action, 'BLOCKED', verdict.matchedPattern, deps.now())
+    appendReceipt(deps.auditPath, receipt)
+    // MCP profile §5.2.2: a PEP surfaces the deny reason from context.reason.
+    return { decision: false, context: { reason: verdict.reason, receipt: receipt.receipt_hash } }
+  }
+  if (verdict.kind === 'ALLOW') {
+    const receipt = buildPolicyReceipt(action, 'ALLOWED', verdict.matchedPattern, deps.now())
+    appendReceipt(deps.auditPath, receipt)
+    return { decision: true, context: { receipt: receipt.receipt_hash } }
+  }
+
+  // PENDING: reuse the hold store. Approved holds permit exactly once.
+  const existing = deps.holds.find(action)
+  if (existing) {
+    const status = deps.holds.peek(existing.run_id)
+    if (status === 'approved') {
+      const receipt = buildPolicyReceipt(action, 'ALLOWED', verdict.matchedPattern, deps.now(), {
+        run_id: existing.run_id,
+        status: 'approved',
+      })
+      appendReceipt(deps.auditPath, receipt)
+      deps.holds.consume(existing.run_id)
+      return { decision: true, context: { receipt: receipt.receipt_hash } }
+    }
+    if (status === 'rejected') {
+      const receipt = buildPolicyReceipt(action, 'BLOCKED', verdict.matchedPattern, deps.now(), {
+        run_id: existing.run_id,
+        status: 'rejected',
+      })
+      appendReceipt(deps.auditPath, receipt)
+      return {
+        decision: false,
+        context: {
+          reason: 'approval_rejected',
+          receipt: receipt.receipt_hash,
+          jamjet: { approval_id: existing.run_id, status: 'rejected' },
+        },
+      }
+    }
+    return pendingDecision(existing.run_id, deps)
+  }
+
+  const rec = deps.holds.hold(action, deps.now())
+  const receipt = buildPolicyReceipt(action, 'WAITING_FOR_APPROVAL', verdict.matchedPattern, deps.now(), {
+    run_id: rec.run_id,
+    status: 'pending',
+  })
+  appendReceipt(deps.auditPath, receipt)
+  return pendingDecision(rec.run_id, deps, receipt.receipt_hash)
+}
+
+function pendingDecision(runId: string, deps: AuthzDepsV2, receiptHash?: string): AuthZenDecision {
+  return {
+    decision: false,
+    context: {
+      reason: 'approval_required',
+      ...(receiptHash ? { receipt: receiptHash } : {}),
+      jamjet: {
+        approval_id: runId,
+        approval_url: `${deps.approvalBaseUrl}/${runId}`,
+        approve_with: `jamjet-ext-authz approve ${runId}`,
+        status: 'pending',
+      },
+    },
+  }
+}
+
+// Response headers may echo X-Request-ID, which is caller-supplied: strip anything
+// outside printable ASCII so the echo cannot smuggle header control characters, and
+// bound its length.
+function echoHeaders(headers: Record<string, string | undefined>): Record<string, string> {
+  const base: Record<string, string> = { 'content-type': 'application/json' }
+  const rid = headers['x-request-id']
+  if (typeof rid === 'string' && rid.length > 0) {
+    const clean = rid.replace(/[^\x20-\x7e]/g, '').slice(0, 128)
+    if (clean) base['x-request-id'] = clean
+  }
+  return base
+}
+
+function respond(status: number, body: unknown, headers: Record<string, string | undefined>): AuthzHttpResult {
+  return { status, headers: echoHeaders(headers), body: JSON.stringify(body) }
+}
+
+const SEMANTICS = ['execute_all', 'deny_on_first_deny', 'permit_on_first_permit'] as const
+type EvaluationsSemantic = (typeof SEMANTICS)[number]
+
+// Each batch item can mint a receipt and create a hold (two file writes), so the batch
+// size bounds disk amplification, not just CPU. 64 is far above any real PEP batch.
+const MAX_BATCH_EVALUATIONS = 64
+
+export function handleAuthZen(
+  path: string,
+  method: string,
+  rawBody: string,
+  headers: Record<string, string | undefined>,
+  deps: AuthzDepsV2,
+): AuthzHttpResult {
+  // Both AuthZen endpoints are POST-only. Refuse other methods before any parsing or
+  // side effect so a GET/PUT carrying a body is never evaluated.
+  if (method.toUpperCase() !== 'POST') {
+    return respond(405, { error: 'method_not_allowed' }, headers)
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(rawBody)
+  } catch {
+    return respond(400, { error: 'invalid_json' }, headers)
+  }
+  if (!isPlainObject(parsed)) return respond(400, { error: 'invalid_request' }, headers)
+
+  if (path === AUTHZEN_EVALUATION_PATH) {
+    const action = parseEvaluation(parsed, deps.defaultServer)
+    if (typeof action === 'string') return respond(400, { error: 'invalid_request', detail: action }, headers)
+    return respond(200, evaluateOne(action, deps), headers)
+  }
+
+  if (path === AUTHZEN_EVALUATIONS_PATH) {
+    const rawItems = parsed.evaluations
+    // Spec: an absent or empty evaluations array behaves as a single Access Evaluation
+    // over the top-level fields, returning the single-eval shape.
+    if (rawItems === undefined || (Array.isArray(rawItems) && rawItems.length === 0)) {
+      const action = parseEvaluation(parsed, deps.defaultServer)
+      if (typeof action === 'string') return respond(400, { error: 'invalid_request', detail: action }, headers)
+      return respond(200, evaluateOne(action, deps), headers)
+    }
+    if (!Array.isArray(rawItems)) {
+      return respond(400, { error: 'invalid_request', detail: 'evaluations must be an array' }, headers)
+    }
+    if (rawItems.length > MAX_BATCH_EVALUATIONS) {
+      return respond(400, { error: 'invalid_request', detail: `evaluations exceeds the maximum of ${MAX_BATCH_EVALUATIONS}` }, headers)
+    }
+
+    // Validate and merge EVERY item up front. A malformed item (a required attribute
+    // omitted after default-merge) is a Bad Request per spec, so the whole batch 400s
+    // before any receipt is minted or hold created — no partial side effects.
+    const actions: AuthzAction[] = []
+    for (const item of rawItems) {
+      const merged: Record<string, unknown> = isPlainObject(item)
+        ? {
+            subject: item.subject ?? parsed.subject,
+            action: item.action ?? parsed.action,
+            resource: item.resource ?? parsed.resource,
+            context: item.context ?? parsed.context,
+          }
+        : {}
+      const action = parseEvaluation(merged, deps.defaultServer)
+      if (typeof action === 'string') {
+        return respond(400, { error: 'invalid_request', detail: `invalid evaluation: ${action}` }, headers)
+      }
+      actions.push(action)
+    }
+
+    const options = isPlainObject(parsed.options) ? parsed.options : {}
+    // Absent option defaults to execute_all; a present-but-unrecognized value is a bad
+    // request, not a silent fallback that would change batch semantics on a typo.
+    const rawSemantic = options.evaluations_semantic
+    if (rawSemantic !== undefined && !SEMANTICS.includes(rawSemantic as EvaluationsSemantic)) {
+      return respond(400, { error: 'invalid_request', detail: `unknown evaluations_semantic: ${String(rawSemantic)}` }, headers)
+    }
+    const semantic: EvaluationsSemantic = (rawSemantic as EvaluationsSemantic) ?? 'execute_all'
+
+    const results: AuthZenDecision[] = []
+    for (const action of actions) {
+      const result = evaluateOne(action, deps)
+      results.push(result)
+      if (semantic === 'deny_on_first_deny' && !result.decision) break
+      if (semantic === 'permit_on_first_permit' && result.decision) break
+    }
+    return respond(200, { evaluations: results }, headers)
+  }
+
+  return respond(404, { error: 'not_found' }, headers)
+}

@@ -1,6 +1,6 @@
 {
   "name": "@jamjet/ext-authz",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "JamJet Policy Decision Point exposed over the Envoy HTTP ext_authz contract. Allow, block, or hold MCP tool calls and emit AgentBoundary receipts, in front of any Envoy-compatible proxy.",
   "type": "module",
   "bin": { "jamjet-ext-authz": "./dist/bin.js" },
