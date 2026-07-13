@@ -9,5 +9,7 @@ First published release.
 - Trust baseline (`trust.lock`): load, save, approve.
 - `evaluateToolsList` / `evaluateCall` evaluation pipeline with
   `decideFromFindings` severity resolution.
-- MCP Security Receipts: canonical-JSON SHA-256 hashed, append-only JSONL.
+- MCP Security Receipts: canonical-JSON SHA-256 hashed, append-only JSONL. The
+  canonicalizer handles a `__proto__` own-property key as data (null-prototype build),
+  so no two distinct payloads collide to the same hash.
 - Config via the `threat` block of a policy file, with safe defaults when absent.
