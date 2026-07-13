@@ -234,9 +234,13 @@ export function handleAuthZen(
     }
 
     const options = isPlainObject(parsed.options) ? parsed.options : {}
-    const semantic: EvaluationsSemantic = SEMANTICS.includes(options.evaluations_semantic as EvaluationsSemantic)
-      ? (options.evaluations_semantic as EvaluationsSemantic)
-      : 'execute_all'
+    // Absent option defaults to execute_all; a present-but-unrecognized value is a bad
+    // request, not a silent fallback that would change batch semantics on a typo.
+    const rawSemantic = options.evaluations_semantic
+    if (rawSemantic !== undefined && !SEMANTICS.includes(rawSemantic as EvaluationsSemantic)) {
+      return respond(400, { error: 'invalid_request', detail: `unknown evaluations_semantic: ${String(rawSemantic)}` }, headers)
+    }
+    const semantic: EvaluationsSemantic = (rawSemantic as EvaluationsSemantic) ?? 'execute_all'
 
     const results: AuthZenDecision[] = []
     for (const action of actions) {

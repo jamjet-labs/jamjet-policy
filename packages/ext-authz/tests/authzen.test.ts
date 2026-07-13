@@ -299,6 +299,13 @@ describe('batch evaluations', () => {
     expect(post(deps, AUTHZEN_EVALUATIONS_PATH, body).status).toBe(400)
   })
 
+  it('400 on an unknown evaluations_semantic (no silent fallback to execute_all)', () => {
+    const r = post(deps, AUTHZEN_EVALUATIONS_PATH, batch([{}], { evaluations_semantic: 'deny_on_first_denny' }))
+    expect(r.status).toBe(400)
+    // Absent option still defaults to execute_all.
+    expect(post(deps, AUTHZEN_EVALUATIONS_PATH, batch([{}])).status).toBe(200)
+  })
+
   it('400 (whole batch) when any item is malformed after default-merge (MUST bad-request)', () => {
     // Spec: an omitted required attribute MUST be a Bad Request, not a soft deny.
     const body = JSON.stringify({
