@@ -1,5 +1,6 @@
 import { createServer as createHttpServer, type Server } from 'node:http'
 import { handleAuthzWithHold, type AuthzDepsV2 } from './handle.js'
+import { handleAuthZen, isAuthZenPath } from './authzen.js'
 
 // Cap the buffered ext_authz body so a large or slow request cannot exhaust memory.
 const MAX_BODY_BYTES = 1024 * 1024 // 1 MiB
@@ -40,7 +41,12 @@ export function createServer(deps: AuthzDepsV2): Server {
         const rawBody = Buffer.concat(chunks).toString('utf-8')
         const headers: Record<string, string | undefined> = {}
         for (const [k, v] of Object.entries(req.headers)) headers[k] = Array.isArray(v) ? v[0] : v
-        const result = handleAuthzWithHold(rawBody, headers, deps)
+        // /access/* is the AuthZen PDP surface; every other path keeps the Envoy
+        // HTTP ext_authz contract, so existing PEP configs are unaffected.
+        const path = (req.url ?? '/').split('?')[0] ?? '/'
+        const result = isAuthZenPath(path)
+          ? handleAuthZen(path, rawBody, headers, deps)
+          : handleAuthzWithHold(rawBody, headers, deps)
         res.writeHead(result.status, result.headers)
         res.end(result.body)
       } catch {
