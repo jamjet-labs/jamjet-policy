@@ -1,0 +1,38 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+#
+# agentgateway -f agentgateway.yaml
+#
+# One route: an MCP backend (the reference "everything" server over stdio) guarded by
+# the JamJet PDP via agentgateway's HTTP external-authorization policy. Every request
+# on the route is checked; the PDP only evaluates tools/call bodies and passes
+# everything else through.
+binds:
+  - port: 3000
+    listeners:
+      - routes:
+          - policies:
+              cors:
+                allowOrigins: ["*"]
+                allowHeaders: [mcp-protocol-version, content-type, cache-control]
+                exposeHeaders: ["Mcp-Session-Id"]
+              extAuthz:
+                host: localhost:9191
+                protocol:
+                  http:
+                    path: '"/check"'
+                    # parseAction prefers x-jamjet-server over the Host header, so
+                    # receipts name the MCP target instead of the PDP's own host:port.
+                    addRequestHeaders:
+                      x-jamjet-server: '"everything"'
+                includeRequestHeaders:
+                  - content-type
+                  - mcp-session-id
+                includeRequestBody:
+                  maxRequestBytes: 65536
+            backends:
+              - mcp:
+                  targets:
+                    - name: everything
+                      stdio:
+                        cmd: npx
+                        args: ["-y", "@modelcontextprotocol/server-everything"]

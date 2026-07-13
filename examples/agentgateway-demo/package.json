@@ -1,0 +1,13 @@
+{
+  "name": "@jamjet/example-agentgateway-demo",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "End-to-end demo: agentgateway MCP route guarded by the JamJet ext-authz PDP (allow / block / human approval).",
+  "scripts": {
+    "demo": "bash run.sh"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0"
+  }
+}

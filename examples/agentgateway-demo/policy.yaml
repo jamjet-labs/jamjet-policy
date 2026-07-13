@@ -1,0 +1,10 @@
+# JamJet portable policy for the demo. Tool names come from the MCP tools/call payload.
+#   get-env  -> block            (environment exfiltration)
+#   get-sum  -> require_approval (stand-in for a mutating action)
+#   everything else -> allow (a receipt is still minted for every decision)
+version: 1
+rules:
+  - match: "get-env"
+    action: block
+  - match: "get-sum"
+    action: require_approval
