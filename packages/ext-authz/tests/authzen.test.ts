@@ -143,6 +143,19 @@ describe('request validation (fail closed)', () => {
     })
     expect(post(deps, AUTHZEN_EVALUATION_PATH, body).status).toBe(400)
   })
+
+  it('rejects a __proto__ / prototype-polluting key anywhere in arguments (400)', () => {
+    // Defense in depth: even with a correct canonicalizer, a prototype key in
+    // agent-supplied arguments is never legitimate for a tool call. Refuse it.
+    const bodies = [
+      '{"subject":{"type":"user","id":"a"},"action":{"name":"search"},"resource":{"type":"t","id":"search","properties":{"arguments":{"__proto__":{"x":1}}}}}',
+      '{"subject":{"type":"user","id":"a"},"action":{"name":"search"},"resource":{"type":"t","id":"search","properties":{"arguments":{"constructor":{"prototype":{"x":1}}}}}}',
+      '{"subject":{"type":"user","id":"a"},"action":{"name":"search"},"resource":{"type":"t","id":"search","properties":{"arguments":{"nested":{"__proto__":{"x":1}}}}}}',
+    ]
+    for (const b of bodies) {
+      expect(post(deps, AUTHZEN_EVALUATION_PATH, b).status).toBe(400)
+    }
+  })
 })
 
 describe('protocol details', () => {
@@ -185,6 +198,15 @@ describe('server routing', () => {
       })
       // ext_authz deny: HTTP 403.
       expect(envoy.status).toBe(403)
+
+      // A mixed-case /access path must be treated as AuthZen, never fall through to the
+      // ext_authz handler whose passthrough (non-tools/call body -> 200) would turn an
+      // AuthZen deny into a silent allow.
+      const mixed = await fetch(`http://127.0.0.1:${port}/ACCESS/v1/evaluation`, {
+        method: 'POST',
+        body: evaluation('delete_user'),
+      })
+      expect(mixed.status).not.toBe(200)
     } finally {
       server.close()
     }

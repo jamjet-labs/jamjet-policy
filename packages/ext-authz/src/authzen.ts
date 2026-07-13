@@ -14,8 +14,26 @@ export const AUTHZEN_EVALUATION_PATH = '/access/v1/evaluation'
 export const AUTHZEN_EVALUATIONS_PATH = '/access/v1/evaluations'
 const AUTHZEN_PREFIX = '/access/'
 
+// Case-insensitive: any /access-family path (any casing) is claimed by the AuthZen PDP so
+// it can never fall through to the ext_authz handler, whose non-tools/call passthrough
+// (HTTP 200) would silently turn an AuthZen deny into an allow.
 export function isAuthZenPath(path: string): boolean {
-  return path.startsWith(AUTHZEN_PREFIX)
+  return path.toLowerCase().startsWith(AUTHZEN_PREFIX)
+}
+
+// Keys that are never legitimate in agent-supplied tool arguments and only appear in
+// prototype-pollution attempts. Rejected outright, at any nesting depth.
+const FORBIDDEN_ARG_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+function hasForbiddenKey(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasForbiddenKey)
+  if (isPlainObject(value)) {
+    for (const key of Object.keys(value)) {
+      if (FORBIDDEN_ARG_KEYS.has(key)) return true
+      if (hasForbiddenKey(value[key])) return true
+    }
+  }
+  return false
 }
 
 interface AuthZenDecision {
@@ -48,6 +66,7 @@ function parseEvaluation(req: Record<string, unknown>, defaultServer: string): A
   let args: Record<string, unknown> = {}
   if (props.arguments !== undefined) {
     if (!isPlainObject(props.arguments)) return 'resource.properties.arguments must be an object'
+    if (hasForbiddenKey(props.arguments)) return 'arguments must not contain __proto__, constructor, or prototype keys'
     args = props.arguments
   }
   const server = typeof props.server === 'string' ? props.server : defaultServer
