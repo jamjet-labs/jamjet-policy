@@ -9,6 +9,7 @@ One policy file. One audit trail. Across hooks, guardrails, MCP gateways, SDKs, 
 - [`@jamjet/claude-code-hook`](packages/claude-code-hook) — JamJet policy as a Claude Code PreToolUse hook
 - [`@jamjet/openai-guardrail`](packages/openai-guardrail) — JamJet policy as an OpenAI Agents SDK guardrail
 - [`@jamjet/mcp-shim`](packages/mcp-shim) — JamJet policy as an MCP stdio interceptor
+- [`@jamjet/cedar`](packages/cedar): Cedar policies (AgentCore, AGT style) validated against a published tool-call schema and composed with `policy.yaml`
 - [`@jamjet/cli`](packages/cli) — Unified `audit show` + `approve` across all adapters
 
 All four adapters share a single `policy.yaml` format and a single audit JSONL schema.
