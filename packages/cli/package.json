@@ -1,6 +1,6 @@
 {
   "name": "@jamjet/cli",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "JamJet CLI — audit show + approve + cloud link + sync daemon",
   "type": "module",
   "bin": {
@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@jamjet/cedar": "workspace:*",
     "@jamjet/cloud": "^0.3.0",
     "@jamjet/mcp-threat": "workspace:*",
     "better-sqlite3": "^11.5.0",

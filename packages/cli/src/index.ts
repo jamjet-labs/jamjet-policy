@@ -11,8 +11,9 @@ import { resolveServerCommand } from './mcp/resolve.js'
 import { trustReview, trustApprove } from './mcp/trust.js'
 import { mcpGraph, type GraphFormat } from './mcp/graph.js'
 import { mcpBench, type BenchFormat } from './mcp/bench.js'
+import { policyValidate, policyExplain, type CommandResult } from './policy/commands.js'
 
-const VERSION = '0.2.0'
+const VERSION = '0.3.0'
 
 function printHelp(): void {
   process.stdout.write(`jamjet — JamJet CLI (v${VERSION})
@@ -37,6 +38,12 @@ MCP:
   jamjet mcp graph [--risk] [--format text|mermaid|json] [--lock <path>] [--policy <path>]
   jamjet mcp bench [--iterations N] [--format text|json]
 
+Policy:
+  jamjet policy validate [--policy <policy.yaml>] [--cedar <policies.cedar>] [--cedar-schema <input.cedarschema>]
+  jamjet policy explain --tool <name> [--server <name>] [--args <json>] [--agent <id>] [--tag k=v ...]
+                        [--risk <label>] [--approval-status none|pending|approved|rejected]
+                        [--policy <policy.yaml>] [--cedar <policies.cedar>] [--cedar-schema <file>] [--json]
+
 Misc:
   jamjet --version
   jamjet --help
@@ -47,6 +54,20 @@ function getFlag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name)
   if (i < 0) return undefined
   return args[i + 1]
+}
+
+function getAllFlags(args: string[], name: string): string[] {
+  const out: string[] = []
+  args.forEach((a, i) => {
+    if (a === name && args[i + 1] !== undefined) out.push(args[i + 1]!)
+  })
+  return out
+}
+
+function emit(r: CommandResult): void {
+  if (r.out) process.stdout.write(r.out)
+  if (r.err) process.stderr.write(r.err)
+  process.exitCode = r.exitCode
 }
 
 function hasFlag(args: string[], name: string): boolean {
@@ -78,6 +99,28 @@ async function main(): Promise<void> {
       date: getFlag(rest, '--date'),
       adapter: getFlag(rest, '--adapter'),
     })
+    return
+  }
+
+  if (cmd === 'policy' && (sub === 'validate' || sub === 'explain')) {
+    const files = { policy: getFlag(rest, '--policy'), cedar: getFlag(rest, '--cedar'), cedarSchema: getFlag(rest, '--cedar-schema') }
+    if (sub === 'validate') {
+      emit(policyValidate(files))
+      return
+    }
+    emit(
+      policyExplain({
+        ...files,
+        tool: getFlag(rest, '--tool'),
+        server: getFlag(rest, '--server'),
+        args: getFlag(rest, '--args'),
+        agent: getFlag(rest, '--agent'),
+        tags: getAllFlags(rest, '--tag'),
+        risk: getFlag(rest, '--risk'),
+        approvalStatus: getFlag(rest, '--approval-status'),
+        json: hasFlag(rest, '--json'),
+      }),
+    )
     return
   }
 

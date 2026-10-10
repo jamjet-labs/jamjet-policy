@@ -92,6 +92,8 @@ const SERVER = 'JamJet::Server'
 export class CedarPolicySet {
   readonly policyIds: readonly string[]
   readonly warnings: readonly string[]
+  /** Ids of permit policies annotated @require_approval. */
+  readonly approvalPolicyIds: readonly string[]
   private readonly key: string
   private readonly approvalIds: Set<string>
   private readonly inputType: InputType
@@ -100,6 +102,7 @@ export class CedarPolicySet {
     this.key = init.key
     this.policyIds = init.policyIds
     this.approvalIds = init.approvalIds
+    this.approvalPolicyIds = [...init.approvalIds]
     this.inputType = init.inputType
     this.warnings = init.warnings
   }

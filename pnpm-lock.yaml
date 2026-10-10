@@ -77,6 +77,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@jamjet/cedar':
+        specifier: workspace:*
+        version: link:../cedar
       '@jamjet/cloud':
         specifier: ^0.3.0
         version: 0.3.0
