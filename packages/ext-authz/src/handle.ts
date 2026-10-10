@@ -1,12 +1,20 @@
 import type { PolicyEvaluator } from '@jamjet/cloud'
+import type { ApprovalStatus, CedarPolicySet } from '@jamjet/cedar'
 import type { AuthzHttpResult } from './types.js'
 import { decidePolicy } from './policy.js'
 import { parseAction } from './parse.js'
 import { buildPolicyReceipt, appendReceipt, verdictToDecision, type PolicyReceipt } from './receipt.js'
-import type { HoldStore } from './hold.js'
+import type { HoldRecord, HoldStore } from './hold.js'
 
 export interface AuthzDeps {
   evaluator: PolicyEvaluator
+  /** Cedar policies evaluated alongside the YAML rules; the stricter outcome wins. */
+  cedar?: CedarPolicySet | null
+  /**
+   * Request header that names the calling agent for Cedar's principal. Off by default:
+   * only set it when the proxy overwrites this header, or any client can claim any id.
+   */
+  principalHeader?: string
   auditPath: string
   now: () => string
   defaultServer: string
@@ -41,10 +49,10 @@ export function handleAuthz(
   // that is not a tool call passes through: this PDP governs tool execution, and the
   // upstream MCP server rejects anything it cannot parse. Use a strict, tools/call-only
   // proxy route if you need every payload to fail closed.
-  const action = parseAction(rawBody, headers, deps.defaultServer)
+  const action = parseAction(rawBody, headers, deps.defaultServer, deps.principalHeader)
   if (!action) return { status: 200, headers: {}, body: '' }
 
-  const verdict = decidePolicy(deps.evaluator, action)
+  const verdict = decidePolicy(deps.evaluator, action, { policies: deps.cedar, approvalStatus: 'none' })
   const receipt = buildPolicyReceipt(action, verdictToDecision(verdict.kind), verdict.matchedPattern, deps.now())
   appendReceipt(deps.auditPath, receipt)
 
@@ -56,6 +64,25 @@ export function handleAuthz(
 export interface AuthzDepsV2 extends AuthzDeps {
   holds: HoldStore
   approvalBaseUrl: string
+}
+
+// The hold state Cedar sees as context.approval_status. It comes only from the hold
+// store, never from the request, so a caller cannot claim an approval.
+export function holdStatus(deps: AuthzDepsV2, existing: HoldRecord | null): ApprovalStatus {
+  if (!existing) return 'none'
+  const s = deps.holds.peek(existing.run_id)
+  return s === 'approved' || s === 'rejected' || s === 'pending' ? s : 'none'
+}
+
+// A Cedar policy can permit a call because context.approval_status is "approved". That
+// approval is single-use like any other: consume it so the call cannot be replayed.
+export function consumeIfApproved(
+  deps: AuthzDepsV2,
+  existing: HoldRecord | null,
+): { run_id: string; status: 'approved' } | undefined {
+  if (!existing || deps.holds.peek(existing.run_id) !== 'approved') return undefined
+  deps.holds.consume(existing.run_id)
+  return { run_id: existing.run_id, status: 'approved' }
 }
 
 // The runId is a deterministic, internal lookup key (a slice of the action hash), NOT a
@@ -89,10 +116,11 @@ export function handleAuthzWithHold(
   deps: AuthzDepsV2,
 ): AuthzHttpResult {
   if (isPartialBody(headers)) return denyPartial()
-  const action = parseAction(rawBody, headers, deps.defaultServer)
+  const action = parseAction(rawBody, headers, deps.defaultServer, deps.principalHeader)
   if (!action) return { status: 200, headers: {}, body: '' }
 
-  const verdict = decidePolicy(deps.evaluator, action)
+  const existing = deps.holds.find(action)
+  const verdict = decidePolicy(deps.evaluator, action, { policies: deps.cedar, approvalStatus: holdStatus(deps, existing) })
 
   if (verdict.kind === 'BLOCK') {
     const receipt = buildPolicyReceipt(action, 'BLOCKED', verdict.matchedPattern, deps.now())
@@ -100,13 +128,13 @@ export function handleAuthzWithHold(
     return deny403(verdict.reason, receipt)
   }
   if (verdict.kind === 'ALLOW') {
-    const receipt = buildPolicyReceipt(action, 'ALLOWED', verdict.matchedPattern, deps.now())
+    const approved = consumeIfApproved(deps, existing)
+    const receipt = buildPolicyReceipt(action, 'ALLOWED', verdict.matchedPattern, deps.now(), approved)
     appendReceipt(deps.auditPath, receipt)
     return { status: 200, headers: { 'x-jamjet-receipt': receipt.receipt_hash }, body: '' }
   }
 
   // PENDING: retry path if a hold already exists, else create one.
-  const existing = deps.holds.find(action)
   if (existing) {
     const status = deps.holds.peek(existing.run_id)
     if (status === 'approved') {

@@ -26,8 +26,12 @@ export interface HoldStore {
 // cannot escape the hold directory via path traversal (e.g. "../../etc/x").
 const RUN_ID_RE = /^run_[0-9a-f]{32}$/
 
+// When the enforcement point names the caller, the hold is bound to it: an approval
+// granted to one principal cannot release the same call for another. Without a
+// principal the hash is unchanged, so existing holds stay valid.
 export function actionHash(action: AuthzAction): string {
-  return sha256Canonical({ server: action.server, tool: action.tool, args: action.args })
+  const base = { server: action.server, tool: action.tool, args: action.args }
+  return sha256Canonical(action.principal ? { ...base, principal: action.principal.id } : base)
 }
 
 function runIdFor(action: AuthzAction): string {

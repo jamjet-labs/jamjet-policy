@@ -4,6 +4,7 @@ export function parseAction(
   rawBody: string,
   headers: Record<string, string | undefined>,
   defaultServer: string,
+  principalHeader?: string,
 ): AuthzAction | null {
   let rpc: unknown
   try {
@@ -16,5 +17,11 @@ export function parseAction(
   if (r.method !== 'tools/call' || typeof r.params?.name !== 'string') return null
   const server = headers['x-jamjet-server'] ?? headers['host'] ?? defaultServer
   const args = (r.params.arguments ?? {}) as Record<string, unknown>
-  return { server, tool: r.params.name, args }
+  const principalId = principalHeader ? headers[principalHeader.toLowerCase()] : undefined
+  return {
+    server,
+    tool: r.params.name,
+    args,
+    ...(typeof principalId === 'string' && principalId.length > 0 ? { principal: { id: principalId } } : {}),
+  }
 }

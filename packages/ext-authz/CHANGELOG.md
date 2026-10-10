@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0
+
+- Cedar policies: `--cedar <policies.cedar>` and `--cedar-schema <input.cedarschema>`
+  evaluate Cedar (via `@jamjet/cedar`) alongside the YAML rules on the ext_authz and
+  AuthZen surfaces. The stricter outcome wins; a Cedar load failure stops startup and
+  a Cedar evaluation error blocks the call.
+- AuthZen `subject` now reaches the policy engine: `subject.id` is the Cedar principal,
+  string `subject.properties` are its tags, and `context.risk` is the risk label.
+- Holds are bound to the principal when one is known (AuthZen subject, or the
+  `--principal-header` header), so an approval for one subject cannot release the same
+  call for another. Holds created by 0.2.0 for AuthZen requests are not found by 0.3.0
+  and must be re-requested.
+- `context.approval_status` is read from the hold store. An approval that a Cedar
+  policy permits on is consumed, like any other approval.
+
 ## 0.2.0
 
 - OpenID AuthZen Authorization API 1.0 surface on the same PDP: `POST /access/v1/evaluation`

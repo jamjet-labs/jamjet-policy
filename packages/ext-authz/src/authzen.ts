@@ -6,7 +6,7 @@
 // requests (400) and server faults (500). The require_approval hold maps to a deny whose
 // context carries step-up instructions, which the AuthZen spec explicitly permits.
 import type { AuthzAction, AuthzHttpResult } from './types.js'
-import type { AuthzDepsV2 } from './handle.js'
+import { holdStatus, consumeIfApproved, type AuthzDepsV2 } from './handle.js'
 import { decidePolicy } from './policy.js'
 import { buildPolicyReceipt, appendReceipt } from './receipt.js'
 
@@ -70,13 +70,32 @@ function parseEvaluation(req: Record<string, unknown>, defaultServer: string): A
     args = props.arguments
   }
   const server = typeof props.server === 'string' ? props.server : defaultServer
-  return { server, tool: action.name, args }
+
+  // The PEP authenticated the subject; its string properties become Cedar principal
+  // tags (the AgentCore pattern: JWT claims as tags). Non-string values are skipped.
+  const tags: Record<string, string> = {}
+  if (isPlainObject(subject.properties)) {
+    for (const [k, v] of Object.entries(subject.properties)) if (typeof v === 'string') tags[k] = v
+  }
+  const runId = typeof tags.run_id === 'string' ? tags.run_id : undefined
+  // Only risk is read from the request context. approval_status is JamJet's own hold
+  // state and is never taken from the request.
+  const ctx = isPlainObject(req.context) ? req.context : {}
+  const risk = typeof ctx.risk === 'string' ? ctx.risk : undefined
+  return {
+    server,
+    tool: action.name,
+    args,
+    principal: { id: subject.id, kind: subject.type, tags, ...(runId !== undefined ? { runId } : {}) },
+    ...(risk !== undefined ? { risk } : {}),
+  }
 }
 
 // Same decision flow as the ext_authz handler (block / allow / hold with single-use
 // approval), rendered as an AuthZen decision instead of an HTTP status.
 function evaluateOne(action: AuthzAction, deps: AuthzDepsV2): AuthZenDecision {
-  const verdict = decidePolicy(deps.evaluator, action)
+  const existing = deps.holds.find(action)
+  const verdict = decidePolicy(deps.evaluator, action, { policies: deps.cedar, approvalStatus: holdStatus(deps, existing) })
 
   if (verdict.kind === 'BLOCK') {
     const receipt = buildPolicyReceipt(action, 'BLOCKED', verdict.matchedPattern, deps.now())
@@ -85,13 +104,13 @@ function evaluateOne(action: AuthzAction, deps: AuthzDepsV2): AuthZenDecision {
     return { decision: false, context: { reason: verdict.reason, receipt: receipt.receipt_hash } }
   }
   if (verdict.kind === 'ALLOW') {
-    const receipt = buildPolicyReceipt(action, 'ALLOWED', verdict.matchedPattern, deps.now())
+    const approved = consumeIfApproved(deps, existing)
+    const receipt = buildPolicyReceipt(action, 'ALLOWED', verdict.matchedPattern, deps.now(), approved)
     appendReceipt(deps.auditPath, receipt)
     return { decision: true, context: { receipt: receipt.receipt_hash } }
   }
 
   // PENDING: reuse the hold store. Approved holds permit exactly once.
-  const existing = deps.holds.find(action)
   if (existing) {
     const status = deps.holds.peek(existing.run_id)
     if (status === 'approved') {
