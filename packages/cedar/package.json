@@ -23,7 +23,7 @@
   },
   "dependencies": {
     "@cedar-policy/cedar-wasm": "4.13.0",
-    "@jamjet/mcp-threat": "workspace:*",
+    "@jamjet/mcp-threat": "^0.1.0",
     "@jamjet/cloud": "^0.3.1"
   },
   "devDependencies": {
