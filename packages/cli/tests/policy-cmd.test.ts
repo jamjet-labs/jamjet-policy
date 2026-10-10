@@ -114,3 +114,31 @@ describe('jamjet policy explain', () => {
     expect(policyExplain({ cedar: g['p.cedar'], tool: 't' }).exitCode).toBe(1)
   })
 })
+
+describe('jamjet policy explain matches the PDP hold flow (review 7)', () => {
+  const g = files({ 'p.cedar': '@id("ask") @require_approval permit (principal, action, resource);' })
+  const run = (approvalStatus: string) => policyExplain({ cedar: g['p.cedar'], tool: 'pay', approvalStatus }).out
+  it('approved: the PDP allows once and consumes the approval', () => {
+    expect(run('approved')).toMatch(/pdp:\s+allow once \(consumes the approval\)/)
+  })
+  it('rejected: the PDP blocks', () => {
+    expect(run('rejected')).toMatch(/pdp:\s+block \(approval rejected\)/)
+  })
+  it('pending and none: the PDP holds', () => {
+    expect(run('pending')).toMatch(/pdp:\s+hold/)
+    expect(run('none')).toMatch(/pdp:\s+hold/)
+  })
+  it('a plain allow with an approved hold also consumes it', () => {
+    const h = files({ 'p.cedar': 'permit (principal, action, resource);' })
+    expect(policyExplain({ cedar: h['p.cedar'], tool: 'pay', approvalStatus: 'approved' }).out).toMatch(/pdp:\s+allow \(consumes the approval\)/)
+    expect(policyExplain({ cedar: h['p.cedar'], tool: 'pay' }).out).toMatch(/pdp:\s+allow$/m)
+  })
+  it('--kind sets the principal kind', () => {
+    const h = files({ 'p.cedar': 'permit (principal, action, resource) when { principal.kind == "user" };' })
+    expect(policyExplain({ cedar: h['p.cedar'], tool: 't', kind: 'user' }).out).toMatch(/result:\s+allow/)
+    expect(policyExplain({ cedar: h['p.cedar'], tool: 't' }).out).toMatch(/result:\s+block/)
+  })
+  it('says where the PDP gets the server name', () => {
+    expect(policyExplain({ cedar: g['p.cedar'], tool: 't', server: 'payments' }).out).toMatch(/--server-name or --server-header/)
+  })
+})

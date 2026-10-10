@@ -76,6 +76,8 @@ export interface ExplainOptions extends PolicyFileOptions {
   /** JSON object of tool arguments. */
   args?: string
   agent?: string
+  /** Principal kind (AuthZen subject.type). Default "agent". */
+  kind?: string
   /** key=value principal tags. */
   tags?: string[]
   risk?: string
@@ -85,13 +87,25 @@ export interface ExplainOptions extends PolicyFileOptions {
 
 const APPROVAL_STATUSES: readonly ApprovalStatus[] = ['none', 'pending', 'approved', 'rejected']
 
+// What jamjet-ext-authz does with the combined decision, given the hold state.
+function pdpOutcome(kind: string, approvalStatus: ApprovalStatus): string {
+  if (kind === 'block') return 'block'
+  if (kind === 'require_approval') {
+    if (approvalStatus === 'approved') return 'allow once (consumes the approval)'
+    if (approvalStatus === 'rejected') return 'block (approval rejected)'
+    if (approvalStatus === 'pending') return 'hold (waiting for approval)'
+    return 'hold (creates an approval request)'
+  }
+  return approvalStatus === 'approved' ? 'allow (consumes the approval)' : 'allow'
+}
+
 function describe(d: PolicyDecision): string {
   return d.pattern === null ? `${d.policyKind} (no rule matched)` : `${d.policyKind} (rule '${d.pattern}')`
 }
 
 /** jamjet policy explain --tool <name> [...]: show what each engine decides and what wins. */
 export function policyExplain(opts: ExplainOptions): CommandResult {
-  if (!opts.tool) return result(64, [], ['Usage: jamjet policy explain --tool <name> [--server <name>] [--args <json>] [--agent <id>] [--tag k=v] [--risk <label>] [--approval-status none|pending|approved|rejected] [--policy <policy.yaml>] [--cedar <policies.cedar>] [--cedar-schema <file>] [--json]'])
+  if (!opts.tool) return result(64, [], ['Usage: jamjet policy explain --tool <name> [--server <name>] [--args <json>] [--agent <id>] [--kind <type>] [--tag k=v] [--risk <label>] [--approval-status none|pending|approved|rejected] [--policy <policy.yaml>] [--cedar <policies.cedar>] [--cedar-schema <file>] [--json]'])
   if (opts.cedarSchema && !opts.cedar) return result(64, [], ['--cedar-schema needs --cedar'])
 
   let args: Record<string, unknown> = {}
@@ -132,7 +146,7 @@ export function policyExplain(opts: ExplainOptions): CommandResult {
         server,
         tool: opts.tool,
         args,
-        principal: { id: agent, tags },
+        principal: { id: agent, kind: opts.kind ?? 'agent', tags },
         ...(opts.risk !== undefined ? { risk: opts.risk } : {}),
         approvalStatus,
       })
@@ -143,13 +157,15 @@ export function policyExplain(opts: ExplainOptions): CommandResult {
   const combined = combineDecisions(yamlDecision, cedar)
 
   if (opts.json) {
-    return result(0, [JSON.stringify({ request: { server, tool: opts.tool, agent, tags, risk: opts.risk ?? 'unknown', approvalStatus, args }, yaml, cedar, result: combined }, null, 2)])
+    return result(0, [JSON.stringify({ request: { server, tool: opts.tool, agent, tags, risk: opts.risk ?? 'unknown', approvalStatus, args }, yaml, cedar, result: combined, pdp: pdpOutcome(combined.policyKind, approvalStatus) }, null, 2)])
   }
   const out = [
     `tool call: ${server}/${opts.tool} as JamJet::Agent::"${agent}"`,
     `yaml:   ${yaml ? describe(yaml) : 'not loaded (pass --policy)'}`,
     `cedar:  ${cedar ? `${cedar.policyKind} (${cedar.reason})` : 'not loaded (pass --cedar)'}`,
     `result: ${combined.policyKind} (from ${combined.source})`,
+    `pdp:    ${pdpOutcome(combined.policyKind, approvalStatus)}`,
+    `note:   server '${server}' is taken as given here; jamjet-ext-authz with Cedar uses --server-name or --server-header`,
   ]
   return result(0, out)
 }

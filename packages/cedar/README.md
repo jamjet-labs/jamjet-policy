@@ -30,7 +30,9 @@ namespace JamJet::Input {
 
 Arguments may use `String`, `Long`, `Bool`, sets and records. Arguments the schema does
 not declare are dropped before evaluation (strict validation means no policy can read
-them). A declared argument with the wrong type blocks the call.
+them), so `context.input has x` on an undeclared `x` is a load error rather than a
+test that is always false. A declared argument with the wrong type, or an integer
+beyond 2^53 (JavaScript cannot hold it exactly), blocks the call.
 
 ## Decisions
 
@@ -48,8 +50,9 @@ when { context.input has amount && context.input.amount >= 500 };
 ```
 
 Loading fails (and nothing is enforced) on a parse error, a schema error, any
-validation error or warning, a template, a duplicate `@id`, or `@require_approval` on a
-`forbid`.
+validation error or warning, a template, a duplicate `@id`, `@require_approval` on a
+`forbid`, or any other annotation that mentions approval (so `@requires_approval`
+cannot quietly load as a plain permit).
 
 ## With YAML rules
 

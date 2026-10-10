@@ -40,7 +40,7 @@ MCP:
 
 Policy:
   jamjet policy validate [--policy <policy.yaml>] [--cedar <policies.cedar>] [--cedar-schema <input.cedarschema>]
-  jamjet policy explain --tool <name> [--server <name>] [--args <json>] [--agent <id>] [--tag k=v ...]
+  jamjet policy explain --tool <name> [--server <name>] [--args <json>] [--agent <id>] [--kind <type>] [--tag k=v ...]
                         [--risk <label>] [--approval-status none|pending|approved|rejected]
                         [--policy <policy.yaml>] [--cedar <policies.cedar>] [--cedar-schema <file>] [--json]
 
@@ -115,6 +115,7 @@ async function main(): Promise<void> {
         server: getFlag(rest, '--server'),
         args: getFlag(rest, '--args'),
         agent: getFlag(rest, '--agent'),
+        kind: getFlag(rest, '--kind'),
         tags: getAllFlags(rest, '--tag'),
         risk: getFlag(rest, '--risk'),
         approvalStatus: getFlag(rest, '--approval-status'),
