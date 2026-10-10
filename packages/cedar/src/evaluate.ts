@@ -72,6 +72,11 @@ function project(value: unknown, type: InputType): unknown {
     return Object.fromEntries(entries)
   }
   if (type.kind === 'set') return Array.isArray(value) ? value.map((v) => project(v, type.element)) : value
+  // JSON numbers past 2^53 have already lost precision in JSON.parse, so the value
+  // evaluated here may differ from what the tool receives. Refuse it.
+  if (typeof value === 'number' && Number.isInteger(value) && !Number.isSafeInteger(value)) {
+    throw new Error(`integer argument ${value} is beyond the exactly representable range`)
+  }
   return value
 }
 

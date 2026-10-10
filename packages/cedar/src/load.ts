@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import * as cedar from '@cedar-policy/cedar-wasm/nodejs'
 import { CORE_SCHEMA, DEFAULT_INPUT_SCHEMA } from './schema.js'
 import { CedarPolicySet, type InputType } from './evaluate.js'
@@ -94,7 +95,7 @@ interface ParsedPolicy {
   requiresApproval: boolean
 }
 
-function parsePolicies(text: string): ParsedPolicy[] {
+function parsePolicies(text: string, inputType: InputType): ParsedPolicy[] {
   const parts = cedar.policySetTextToParts(text)
   if (parts.type !== 'success') throw new CedarLoadError(messages(parts.errors).map((m) => `policy parse: ${m}`))
   if (parts.policy_templates.length > 0) {
@@ -125,13 +126,69 @@ function parsePolicies(text: string): ParsedPolicy[] {
         requiresApproval = true
       }
     }
+    // A misspelled approval annotation would load as a plain permit and let every call
+    // through, so anything that looks like one but is not the exact key is refused.
+    for (const key of Object.keys(annotations)) {
+      if (key !== REQUIRE_APPROVAL_ANNOTATION && /approv/i.test(key)) {
+        problems.push(`policy '${id}': unknown annotation @${key}; the approval annotation is @${REQUIRE_APPROVAL_ANNOTATION}`)
+      }
+    }
+    for (const path of hasPathsOnInput(json.json.conditions)) {
+      if (!inputDeclares(inputType, path)) {
+        problems.push(
+          `policy '${id}': \`has ${['context', 'input', ...path].join('.')}\` tests an argument the input schema does not declare; ` +
+            `undeclared arguments are dropped before evaluation, so it is always false`,
+        )
+      }
+    }
     out.push({ id, text: policyText, effect, requiresApproval })
   })
   if (problems.length > 0) throw new CedarLoadError(problems)
   return out
 }
 
-let loadCounter = 0
+// Path of a pure attribute chain from `context` (["context", "input", "x"]), else null.
+function chainPath(e: unknown): string[] | null {
+  if (!e || typeof e !== 'object') return null
+  const o = e as Record<string, unknown>
+  if (o.Var === 'context') return ['context']
+  const dot = o['.'] as { left: unknown; attr: string } | undefined
+  if (dot && typeof dot === 'object') {
+    const left = chainPath(dot.left)
+    return left ? [...left, dot.attr] : null
+  }
+  return null
+}
+
+// Every `has` test whose full path starts at context.input, as the path below input.
+function hasPathsOnInput(node: unknown, acc: string[][] = []): string[][] {
+  if (Array.isArray(node)) {
+    for (const n of node) hasPathsOnInput(n, acc)
+    return acc
+  }
+  if (!node || typeof node !== 'object') return acc
+  const o = node as Record<string, unknown>
+  const has = o.has as { left: unknown; attr: string | string[] } | undefined
+  if (has && typeof has === 'object' && 'left' in has) {
+    const left = chainPath(has.left)
+    if (left) {
+      const full = [...left, ...(Array.isArray(has.attr) ? has.attr : [has.attr])]
+      if (full[0] === 'context' && full[1] === 'input' && full.length > 2) acc.push(full.slice(2))
+    }
+  }
+  for (const v of Object.values(o)) hasPathsOnInput(v, acc)
+  return acc
+}
+
+function inputDeclares(type: InputType, path: string[]): boolean {
+  let t: InputType = type
+  for (const seg of path) {
+    if (t.kind !== 'record' || !Object.prototype.hasOwnProperty.call(t.attributes, seg)) return false
+    t = t.attributes[seg]!
+  }
+  return true
+}
+
 
 /**
  * Parse, check and validate a Cedar policy set against the published JamJet schema.
@@ -142,7 +199,7 @@ export function loadCedarPolicies(opts: CedarLoadOptions): CedarPolicySet {
   const schemaText = `${CORE_SCHEMA}\n${opts.inputSchema ?? DEFAULT_INPUT_SCHEMA}`
   const inputType = loadInputType(schemaText)
 
-  const policies = parsePolicies(opts.policies)
+  const policies = parsePolicies(opts.policies, inputType)
   const staticPolicies: Record<string, string> = {}
   for (const p of policies) staticPolicies[p.id] = p.text
 
@@ -166,7 +223,10 @@ export function loadCedarPolicies(opts: CedarLoadOptions): CedarPolicySet {
     warnings.push('no permit policy: Cedar denies every tool call')
   }
 
-  const key = `jamjet-${process.pid}-${++loadCounter}`
+  // cedar-wasm keeps preparsed sets in one process-wide store. A random key keeps a
+  // second copy of this module (two versions, ESM and CJS, a bundler) from reusing a
+  // key and silently replacing another set's policies.
+  const key = `jamjet-${randomUUID()}`
   const ps = cedar.preparsePolicySet(key, { staticPolicies })
   if (ps.type !== 'success') throw new CedarLoadError(messages(ps.errors))
   const ss = cedar.preparseSchema(key, schemaText)
