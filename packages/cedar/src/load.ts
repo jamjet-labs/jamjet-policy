@@ -47,7 +47,8 @@ function resolveType(t: JsonType, commonTypes: Record<string, JsonType>, path: s
   if (t.type === 'Set') return { kind: 'set', element: resolveType(t.element as JsonType, commonTypes, `${path}[]`, depth + 1) }
   if (t.type === 'Record') {
     const attrs = (t.attributes ?? {}) as Record<string, JsonType>
-    const out: Record<string, InputType> = {}
+    // Null prototype: a declared attribute named "__proto__" must stay an own key.
+    const out: Record<string, InputType> = Object.create(null) as Record<string, InputType>
     for (const [name, at] of Object.entries(attrs)) out[name] = resolveType(at, commonTypes, `${path}.${name}`, depth + 1)
     if (t.additionalAttributes === true) {
       throw new CedarLoadError([`input schema: ${path} must not allow additional attributes`])

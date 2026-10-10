@@ -11,7 +11,7 @@ import { resolveServerCommand } from './mcp/resolve.js'
 import { trustReview, trustApprove } from './mcp/trust.js'
 import { mcpGraph, type GraphFormat } from './mcp/graph.js'
 import { mcpBench, type BenchFormat } from './mcp/bench.js'
-import { policyValidate, policyExplain, type CommandResult } from './policy/commands.js'
+import { policyValidate, policyExplain, missingFlagValue, type CommandResult } from './policy/commands.js'
 
 const VERSION = '0.3.0'
 
@@ -103,6 +103,12 @@ async function main(): Promise<void> {
   }
 
   if (cmd === 'policy' && (sub === 'validate' || sub === 'explain')) {
+    const missing = missingFlagValue(rest)
+    if (missing) {
+      process.stderr.write(`${missing} needs a value\n`)
+      process.exitCode = 64
+      return
+    }
     const files = { policy: getFlag(rest, '--policy'), cedar: getFlag(rest, '--cedar'), cedarSchema: getFlag(rest, '--cedar-schema') }
     if (sub === 'validate') {
       emit(policyValidate(files))

@@ -84,7 +84,8 @@ function parseEvaluation(req: Record<string, unknown>, deps: AuthzDepsV2): Authz
   // form so `principal.hasTag("suspended")` fires for `suspended: true`. With Cedar
   // loaded, an array or object claim is a 400: silently dropping it would make a
   // forbid on that tag dead.
-  const tags: Record<string, string> = {}
+  // Null prototype: a claim named "__proto__" stays an own key, so it becomes a tag.
+  const tags: Record<string, string> = Object.create(null) as Record<string, string>
   if (isPlainObject(subject.properties)) {
     for (const [k, v] of Object.entries(subject.properties)) {
       if (typeof v === 'string') tags[k] = v

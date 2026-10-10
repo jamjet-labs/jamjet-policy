@@ -142,3 +142,10 @@ describe('jamjet policy explain matches the PDP hold flow (review 7)', () => {
     expect(policyExplain({ cedar: g['p.cedar'], tool: 't', server: 'payments' }).out).toMatch(/--server-name or --server-header/)
   })
 })
+
+describe('copilot: explain keeps a __proto__ tag', () => {
+  it('a forbid on that tag fires', () => {
+    const g = files({ 'p.cedar': 'permit (principal, action, resource);\nforbid (principal, action, resource) when { principal.hasTag("__proto__") };' })
+    expect(policyExplain({ cedar: g['p.cedar'], tool: 't', tags: ['__proto__=x'] }).out).toMatch(/result:\s+block/)
+  })
+})

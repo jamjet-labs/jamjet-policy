@@ -190,3 +190,13 @@ describe('review 10: the AuthZen resource id must name the evaluated tool when C
     expect(zen(d, body).status).toBe(400)
   })
 })
+
+describe('copilot: a __proto__ subject claim is kept as a tag', () => {
+  it('a forbid on that tag fires', () => {
+    const d = deps(NO_RULES, 'permit (principal, action, resource);\nforbid (principal, action, resource) when { principal.hasTag("__proto__") };')
+    const raw = `{"subject":{"type":"agent","id":"a","properties":{"__proto__":"x"}},"action":{"name":"refund"},"resource":{"type":"mcp_tool","id":"refund"}}`
+    const res = handleAuthZen(AUTHZEN_EVALUATION_PATH, 'POST', raw, {}, d)
+    expect(res.status).toBe(200)
+    expect(JSON.parse(res.body).decision).toBe(false)
+  })
+})

@@ -31,13 +31,14 @@ const defaultServer = opt(argv, '--server-name', 'mcp')!
 const approvalBaseUrl = opt(argv, '--approval-url', `http://localhost:${port}/approve`)!
 
 // A Cedar flag given without a value must not quietly fall back to "no Cedar".
-for (const flag of ['--cedar', '--cedar-schema', '--principal-header', '--server-header']) {
-  const i = argv.indexOf(flag)
-  if (i >= 0 && (argv[i + 1] === undefined || argv[i + 1]!.startsWith('--'))) {
-    process.stderr.write(`${flag} needs a value\n`)
+// Every occurrence is checked: `--cedar a.cedar --cedar` must not pass on the first.
+const CEDAR_FLAGS = new Set(['--cedar', '--cedar-schema', '--principal-header', '--server-header'])
+argv.forEach((a, i) => {
+  if (CEDAR_FLAGS.has(a) && (argv[i + 1] === undefined || argv[i + 1]!.startsWith('--'))) {
+    process.stderr.write(`${a} needs a value\n`)
     process.exit(2)
   }
-}
+})
 const cedarPath = opt(argv, '--cedar')
 const cedarSchemaPath = opt(argv, '--cedar-schema')
 const principalHeader = opt(argv, '--principal-header')

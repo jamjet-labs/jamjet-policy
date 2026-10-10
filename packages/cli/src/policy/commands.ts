@@ -15,6 +15,26 @@ export interface CommandResult {
   err: string
 }
 
+const VALUE_FLAGS = new Set([
+  '--policy', '--cedar', '--cedar-schema', '--tool', '--server', '--args', '--agent', '--kind', '--tag', '--risk', '--approval-status',
+])
+
+/**
+ * The first value-taking flag (any occurrence) with no value after it, or null. A
+ * missing value must be a usage error, not a flag name read as a value or a flag
+ * silently ignored.
+ */
+export function missingFlagValue(args: string[]): string | null {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!
+    if (!VALUE_FLAGS.has(a)) continue
+    const next = args[i + 1]
+    if (next === undefined || next.startsWith('--')) return a
+    i++
+  }
+  return null
+}
+
 export interface PolicyFileOptions {
   /** YAML policy file. Only read when given; no cwd or home lookup. */
   policy?: string
@@ -119,7 +139,8 @@ export function policyExplain(opts: ExplainOptions): CommandResult {
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return result(64, [], ['--args must be a JSON object'])
     args = parsed as Record<string, unknown>
   }
-  const tags: Record<string, string> = {}
+  // Null prototype: a tag key "__proto__" stays an own key, as it does in the PDP.
+  const tags: Record<string, string> = Object.create(null) as Record<string, string>
   for (const t of opts.tags ?? []) {
     const i = t.indexOf('=')
     if (i <= 0) return result(64, [], [`--tag must be key=value, got '${t}'`])

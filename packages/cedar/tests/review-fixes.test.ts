@@ -51,3 +51,45 @@ describe('review: integers JavaScript cannot represent exactly fail closed', () 
     expect(set.evaluate({ server: 's', tool: 't', args: { amount: 9007199254740991 } }).policyKind).toBe('allow')
   })
 })
+
+describe('copilot: values that are not plain JSON fail closed', () => {
+  const set = loadCedarPolicies({
+    policies: 'permit (principal, action, resource);\nforbid (principal, action, resource) when { context.input has note && context.input.note == "x" };',
+    inputSchema: 'namespace JamJet::Input { type ToolInput = { note?: String, amount?: Long }; }',
+  })
+  const call = (args: Record<string, unknown>) => set.evaluate({ server: 's', tool: 't', args }).policyKind
+  it('an undefined argument blocks instead of being dropped', () => {
+    expect(call({ amount: undefined })).toBe('block')
+  })
+  it('a function argument blocks', () => {
+    expect(call({ note: () => 'x' })).toBe('block')
+  })
+  it('an object with toJSON blocks instead of being coerced', () => {
+    expect(call({ note: { toJSON: () => 'y' } })).toBe('block')
+    expect(call({ note: new Date(0) })).toBe('block')
+  })
+  it('a non-JSON tag value blocks', () => {
+    const d = set.evaluate({ server: 's', tool: 't', args: {}, principal: { id: 'a', tags: { t: undefined as unknown as string } } })
+    expect(d.policyKind).toBe('block')
+  })
+  it('plain JSON still evaluates (control)', () => {
+    expect(call({ note: 'y', amount: 1 })).toBe('allow')
+    expect(call({ note: 'x' })).toBe('block')
+  })
+})
+
+describe('copilot: a declared __proto__ argument is kept', () => {
+  it('a forbid on a __proto__ argument fires', () => {
+    const set = loadCedarPolicies({
+      policies: 'permit (principal, action, resource);\nforbid (principal, action, resource) when { context.input has "__proto__" && context.input["__proto__"] > 1 };',
+      inputSchema: 'namespace JamJet::Input { type ToolInput = { "__proto__"?: Long }; }',
+    })
+    const args = JSON.parse('{"__proto__": 5}') as Record<string, unknown>
+    expect(set.evaluate({ server: 's', tool: 't', args }).policyKind).toBe('block')
+  })
+  it('a __proto__ principal tag is kept', () => {
+    const set = loadCedarPolicies({ policies: 'permit (principal, action, resource);\nforbid (principal, action, resource) when { principal.hasTag("__proto__") };' })
+    const tags = JSON.parse('{"__proto__": "x"}') as Record<string, string>
+    expect(set.evaluate({ server: 's', tool: 't', args: {}, principal: { id: 'a', tags } }).policyKind).toBe('block')
+  })
+})

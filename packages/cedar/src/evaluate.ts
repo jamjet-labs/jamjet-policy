@@ -80,6 +80,29 @@ function project(value: unknown, type: InputType): unknown {
   return value
 }
 
+// JSON.stringify silently drops undefined and functions and calls toJSON, so the
+// value Cedar would see could differ from the value the tool receives. Anything that
+// is not plain JSON data is refused (the caller maps the throw to a block).
+function assertPlainJson(value: unknown, path: string, depth = 0): void {
+  if (depth > 64) throw new Error(`${path}: nesting too deep`)
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new Error(`${path}: non-finite number`)
+    return
+  }
+  if (Array.isArray(value)) {
+    value.forEach((v, i) => assertPlainJson(v, `${path}[${i}]`, depth + 1))
+    return
+  }
+  if (typeof value === 'object') {
+    const proto = Object.getPrototypeOf(value)
+    if (proto !== Object.prototype && proto !== null) throw new Error(`${path}: not a plain object`)
+    for (const k of Object.keys(value)) assertPlainJson((value as Record<string, unknown>)[k], `${path}.${k}`, depth + 1)
+    return
+  }
+  throw new Error(`${path}: ${typeof value} is not JSON`)
+}
+
 // The Tool entity id is "<server>___<tool>". It parses back uniquely only when the
 // server has no "___" and does not end in "_". Otherwise server "a_" with tool "_b"
 // and server "a" with tool "__b" would share the id "a_____b".
@@ -126,10 +149,11 @@ export class CedarPolicySet {
     if (bad) return errorDecision(req.tool, [bad])
     if (req.tool.length === 0) return errorDecision(req.tool, ['tool name is empty'])
 
+    assertPlainJson(req.args, 'args')
+    if (req.principal?.tags !== undefined) assertPlainJson(req.principal.tags, 'tags')
     const principal = req.principal ?? { id: 'anonymous' }
     const toolId = `${req.server}___${req.tool}`
-    // The JSON round trip turns anything that is not plain JSON (BigInt, functions,
-    // cycles) into a thrown error, which evaluate() maps to a block.
+    // Inputs are plain JSON (checked above), so this round trip only copies.
     const context = JSON.parse(
       JSON.stringify({
         args_digest: sha256Canonical(req.args),
