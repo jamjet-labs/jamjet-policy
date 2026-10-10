@@ -19,6 +19,7 @@ import {
 } from '@jamjet/mcp-threat'
 import { randomBytes } from 'node:crypto'
 import { resolveRequestIdentity, INVALID_REQUEST } from './routing.js'
+import { caseConfusableKey, depthExceeds, idKey, isValidId } from './wire.js'
 import {
   classifyClientRequestVersion,
   checkInitializeResult,
@@ -33,8 +34,11 @@ import {
   findInvisibleCharacters,
   loadPinFile,
   printable,
-  savePin,
+  savePins,
+  PINNED_FIELDS,
+  MAX_DEFINITION_DEPTH,
   toolDefinitionHash,
+  type PinEntry,
   type PinFile,
 } from './tool-pins.js'
 import { classifyDeprecated, deprecatedInputRequests, type Direction } from './deprecations.js'
@@ -48,6 +52,20 @@ type Id = number | string
 export const JAMJET_POLICY_ERROR = -32000
 export const METHOD_NOT_FOUND = -32601
 const MAX_PREFETCH_PAGES = 50
+const INTERNAL_ERROR = -32603
+/** Deeper messages are refused before any recursive code (hashing, serialisation) sees them. */
+export const MAX_MESSAGE_DEPTH = 256
+/** First-sight pins per process; a server cannot grow the pin file without bound. */
+export const MAX_FIRST_SIGHT_PINS = 500
+const JSONRPC_MEMBERS = ['jsonrpc', 'id', 'method', 'params', 'result', 'error'] as const
+const PARAM_MEMBERS = ['name', 'arguments', 'uri', 'cursor', '_meta', 'protocolVersion', 'capabilities', 'clientInfo'] as const
+const COMMON_RESULT_MEMBERS = ['resultType', 'inputRequests', 'requestState', '_meta'] as const
+const RESULT_MEMBERS: Record<string, readonly string[]> = {
+  'tools/list': [...COMMON_RESULT_MEMBERS, 'tools', 'nextCursor', 'ttlMs', 'cacheScope'],
+  'initialize': [...COMMON_RESULT_MEMBERS, 'protocolVersion', 'capabilities', 'serverInfo', 'instructions'],
+  'server/discover': [...COMMON_RESULT_MEMBERS, 'supportedVersions', 'capabilities', 'instructions', 'ttlMs', 'cacheScope'],
+}
+const TOOL_MEMBERS = [...PINNED_FIELDS, 'icons', '_meta'] as const
 
 export type PinBlockReason =
   | 'tool_definition_changed'
@@ -56,6 +74,8 @@ export type PinBlockReason =
   | 'duplicate_tool_definition'
   | 'tool_not_listed'
   | 'pin_file_unreadable'
+  | 'ambiguous_definition'
+  | 'definition_too_deep'
 
 /** Everything a client and an operator need to understand and clear a pin block. */
 export interface PinDecisionRecord {
@@ -116,7 +136,7 @@ function hasId(m: Record<string, unknown>): boolean {
 export class ShimCore {
   private era: Era | null = null
   /** client request id -> method, to read the matching server response. */
-  private pending = new Map<Id, string>()
+  private pending = new Map<string, string>()
   /** tool name -> definition hash the shim accepted in this process. */
   private observed = new Map<string, string>()
   private blocked = new Map<string, BlockedTool>()
@@ -162,13 +182,32 @@ export class ShimCore {
       return
     }
 
+    const replyId = isValidId(msg.id) ? msg.id : null
+    const refuse = (message: string, id: Id | null = replyId) => {
+      this.deps.toClient({ jsonrpc: '2.0', id, error: { code: INVALID_REQUEST, message } })
+      this.deps.log(`JamJet: refused client message: ${message}\n`)
+    }
+    if (depthExceeds(msg, MAX_MESSAGE_DEPTH)) return refuse(`message nests deeper than ${MAX_MESSAGE_DEPTH} levels`)
+    const confusable = caseConfusableKey(msg, JSONRPC_MEMBERS)
+    if (confusable !== null) return refuse(`ambiguous member '${confusable}' (keys must not differ only by case)`)
+    if ('id' in msg && !isValidId(msg.id)) return refuse('id must be a string or a number', null)
+
     // A response from the client to a legacy server-initiated request.
     if (!('method' in msg)) {
+      if (replyId === null || !('result' in msg || 'error' in msg)) return refuse('message has no method and is not a response')
       this.deps.toServer(msg)
       return
     }
 
+    if (isObject(msg.params)) {
+      const p = caseConfusableKey(msg.params, PARAM_MEMBERS)
+      if (p !== null) return refuse(`ambiguous params key '${p}' (keys must not differ only by case)`)
+    }
+
     const isRequest = hasId(msg)
+    if (!isRequest && !(typeof msg.method === 'string' && msg.method.startsWith('notifications/'))) {
+      return refuse(`'${String(msg.method)}' is a request and needs an id`, null)
+    }
     const routed = resolveRequestIdentity(msg)
     if (!routed.ok) {
       if (isRequest) this.deps.toClient({ jsonrpc: '2.0', id: msg.id, error: { code: routed.code, message: routed.message } })
@@ -198,7 +237,7 @@ export class ShimCore {
 
     if (this.deprecatedBlocked('from_client', msg)) return
 
-    if (isRequest) this.pending.set(msg.id as Id, method)
+    if (isRequest) this.pending.set(idKey(msg.id as Id), method)
 
     if (method === 'tools/call' && isRequest && name !== null) {
       await this.governToolsCall(msg, name)
@@ -226,7 +265,7 @@ export class ShimCore {
         ? await this.pinCheckForCall(msg, tool)
         : (this.blocked.get(tool)?.record ?? null) // pinning off: only the hidden-character check blocks
       if (pinBlock) {
-        this.pending.delete(id)
+        this.pending.delete(idKey(id))
         this.recordPinBlockedCall(pinBlock, args, trace_id)
         this.deps.toClient(pinBlockResponse(id, pinBlock))
         return
@@ -258,7 +297,7 @@ export class ShimCore {
     })
 
     if (combined === 'BLOCKED') {
-      this.pending.delete(id)
+      this.pending.delete(idKey(id))
       this.deps.toClient(blockResponse(id, rule))
       return
     }
@@ -267,9 +306,19 @@ export class ShimCore {
       this.deps.log(`JamJet: ${tool} waiting approval, run \`jamjet approve ${runId}\`\n`)
       const result = await this.deps.approvals.wait(runId)
       if (result.status !== 'approved') {
-        this.pending.delete(id)
+        this.pending.delete(idKey(id))
         this.deps.toClient(blockResponse(id, rule))
         return
+      }
+      // The definition may have changed while a human was deciding.
+      if (this.deps.config.pinning.mode !== 'off') {
+        const late = await this.pinCheckForCall(msg, tool)
+        if (late) {
+          this.pending.delete(idKey(id))
+          this.recordPinBlockedCall(late, args, trace_id)
+          this.deps.toClient(pinBlockResponse(id, late))
+          return
+        }
       }
     }
     this.deps.toServer(msg)
@@ -330,7 +379,7 @@ export class ShimCore {
         if (Object.keys(meta).length > 0) p._meta = meta
         if (typeof cursor === 'string') p.cursor = cursor
         const res = await this.shimRequest('tools/list', p)
-        if (!res || !isObject(res.result) || !Array.isArray(res.result.tools)) {
+        if (!res || !isObject(res.result) || !Array.isArray(res.result.tools) || caseConfusableKey(res.result, RESULT_MEMBERS['tools/list']!) !== null) {
           this.deps.log(`JamJet pin: could not fetch tools/list from ${this.deps.serverName} to verify a call${res && isObject(res.error) ? ` (${String(res.error.message)})` : ' (timeout)'}\n`)
           return
         }
@@ -365,11 +414,31 @@ export class ShimCore {
   // -------------------------------------------------------------------------
 
   onServerMessage(msg: unknown): void {
+    try {
+      this.handleServerMessage(msg)
+    } catch (err) {
+      // Fail closed on anything unexpected from the server, but keep running.
+      this.deps.log(`JamJet: dropped a server message that could not be inspected: ${(err as Error).message}\n`)
+    }
+  }
+
+  private handleServerMessage(msg: unknown): void {
     if (!isObject(msg)) {
       this.deps.log('JamJet: dropped a server message that is not a single JSON-RPC object\n')
       return
     }
     const isResponse = !('method' in msg) && hasId(msg)
+    const pendingKey = isResponse ? idKey(msg.id as Id) : null
+    const reject = (why: string) => {
+      this.deps.log(`JamJet: refused server message: ${why}\n`)
+      if (pendingKey !== null && this.pending.has(pendingKey)) {
+        this.pending.delete(pendingKey)
+        this.deps.toClient({ jsonrpc: '2.0', id: msg.id, error: { code: INTERNAL_ERROR, message: `JamJet: refused server response (${why})` } })
+      }
+    }
+    if (depthExceeds(msg, MAX_MESSAGE_DEPTH)) return reject(`message nests deeper than ${MAX_MESSAGE_DEPTH} levels`)
+    const confusable = caseConfusableKey(msg, JSONRPC_MEMBERS)
+    if (confusable !== null) return reject(`ambiguous member '${confusable}' (keys must not differ only by case)`)
 
     if (isResponse) {
       const id = msg.id as Id
@@ -377,8 +446,18 @@ export class ShimCore {
         this.shimRequests.get(id)!(msg)
         return
       }
-      const method = this.pending.get(id)
-      this.pending.delete(id)
+      // Ids are matched by type and value: "3" does not answer request 3, so a
+      // server cannot route a result around the checks below.
+      const method = this.pending.get(pendingKey!)
+      if (method === undefined) {
+        this.deps.log(`JamJet: dropped server response with id ${JSON.stringify(id)}: it does not match a pending request\n`)
+        return
+      }
+      if (isObject(msg.result)) {
+        const r = caseConfusableKey(msg.result, RESULT_MEMBERS[method] ?? COMMON_RESULT_MEMBERS)
+        if (r !== null) return reject(`ambiguous result key '${r}' (keys must not differ only by case)`)
+      }
+      this.pending.delete(pendingKey!)
       this.deps.toClient(this.inspectResponse(method, msg))
       return
     }
@@ -487,6 +566,7 @@ export class ShimCore {
     }
 
     const kept: unknown[] = []
+    const newPins: Array<[string, PinEntry]> = []
     for (const t of tools) {
       if (!isObject(t) || typeof t.name !== 'string') {
         this.deps.log(`JamJet pin: dropped a tools/list entry without a string name from ${server}\n`)
@@ -504,6 +584,11 @@ export class ShimCore {
         this.deps.log(`JamJet pin: BLOCKED '${name}' on ${server}: ${detail}${record.approve ? `; to approve: ${record.approve}` : ''}\n`)
       }
 
+      const structural = structuralProblem(t)
+      if (structural) {
+        block(structural.reason, structural.detail)
+        continue
+      }
       if (pinError !== null) {
         block('pin_file_unreadable', `pin file ${cfg.pinning.file} cannot be read: ${pinError}`)
         continue
@@ -552,17 +637,27 @@ export class ShimCore {
         continue
       }
       if (verdict.status === 'first_sight') {
-        this.sessionPins.set(name, hash)
-        try {
-          savePin(cfg.pinning.file, server, name, { hash, pinned_at: this.now(), source: 'first_sight' })
-          this.deps.log(`JamJet pin: pinned '${name}' on ${server} on first sight (${hash})\n`)
-        } catch (err) {
-          this.deps.log(`JamJet pin: WARNING could not write pin for '${name}' (${(err as Error).message}); pinned for this process only\n`)
+        if (this.sessionPins.size >= MAX_FIRST_SIGHT_PINS) {
+          block('tool_not_pinned', `first-sight pin limit (${MAX_FIRST_SIGHT_PINS} per process) reached; approve this tool explicitly`, {
+            approve: approveCommand(server, name, hash, cfg.pinning.file),
+          })
+          continue
         }
+        this.sessionPins.set(name, hash)
+        newPins.push([name, { hash, pinned_at: this.now(), source: 'first_sight' }])
       }
       this.blocked.delete(name)
       this.observed.set(name, hash)
       kept.push(t)
+    }
+
+    if (newPins.length > 0) {
+      try {
+        savePins(cfg.pinning.file, server, newPins)
+        this.deps.log(`JamJet pin: pinned ${newPins.length} tool(s) on ${server} on first sight: ${newPins.map(([n]) => n).join(', ')}\n`)
+      } catch (err) {
+        this.deps.log(`JamJet pin: WARNING could not write ${newPins.length} pin(s) (${(err as Error).message}); pinned for this process only\n`)
+      }
     }
     return kept
   }
@@ -570,6 +665,17 @@ export class ShimCore {
   /** With pinning off, the invisible-character check still runs. */
   private scanInvisibleOnly(t: unknown): boolean {
     if (!isObject(t) || typeof t.name !== 'string') return true
+    const structural = structuralProblem(t)
+    if (structural) {
+      this.deps.log(`JamJet pin: BLOCKED '${t.name}' on ${this.deps.serverName}: ${structural.detail}\n`)
+      this.blocked.set(t.name, {
+        record: {
+          decision: 'BLOCKED', reason: structural.reason, server: this.deps.serverName, tool: t.name,
+          detail: structural.detail, pins_file: this.deps.config.pinning.file,
+        },
+      })
+      return false
+    }
     const invisible = findInvisibleCharacters(t)
     if (invisible.length === 0) return true
     const where = invisible.slice(0, 5).map((f) => `${f.codepoint} at ${f.path}`).join(', ')
@@ -659,6 +765,16 @@ export class ShimCore {
   get currentEra(): Era | null {
     return this.era
   }
+}
+
+/** Definitions another parser could read differently, or too deep to scan, are refused. */
+function structuralProblem(t: Record<string, unknown>): { reason: PinBlockReason; detail: string } | null {
+  const k = caseConfusableKey(t, TOOL_MEMBERS)
+  if (k !== null) return { reason: 'ambiguous_definition', detail: `definition has key '${k}' that differs from another field only by case` }
+  if (depthExceeds(t, MAX_DEFINITION_DEPTH)) {
+    return { reason: 'definition_too_deep', detail: `definition nests deeper than ${MAX_DEFINITION_DEPTH} levels` }
+  }
+  return null
 }
 
 export function approveCommand(server: string, tool: string, hash: string, pinsFile: string): string {

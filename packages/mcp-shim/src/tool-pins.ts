@@ -34,8 +34,9 @@ export type PinVerdict =
   | { status: 'changed'; pinned_hash: string; observed_hash: string }
   | { status: 'not_pinned'; observed_hash: string }
 
-const PINNED_FIELDS = ['name', 'title', 'description', 'inputSchema', 'outputSchema', 'annotations'] as const
+export const PINNED_FIELDS = ['name', 'title', 'description', 'inputSchema', 'outputSchema', 'annotations'] as const
 const HASH_RE = /^sha256:[0-9a-f]{64}$/
+export const MAX_DEFINITION_DEPTH = 64
 
 export function canonicalToolDefinition(tool: unknown): Record<string, unknown> {
   const src = (tool && typeof tool === 'object' ? tool : {}) as Record<string, unknown>
@@ -132,7 +133,11 @@ function displayKey(key: string): string {
 export function findInvisibleCharacters(tool: unknown): InvisibleFinding[] {
   const out: InvisibleFinding[] = []
   const walk = (value: unknown, path: string, depth: number): void => {
-    if (depth > 64) return
+    if (depth > MAX_DEFINITION_DEPTH) {
+      // Never report "clean" for content the scan did not read.
+      out.push({ path, codepoint: 'nesting-limit' })
+      return
+    }
     if (typeof value === 'string') {
       for (const cp of scanString(value)) out.push({ path, codepoint: u(cp) })
       return
@@ -196,10 +201,17 @@ export function loadPinFile(path: string): PinFile {
 
 /** Re-read, merge one entry, and replace the file atomically. */
 export function savePin(path: string, server: string, tool: string, entry: PinEntry): void {
-  if (!HASH_RE.test(entry.hash)) throw new Error(`refusing to pin malformed hash '${entry.hash}'`)
+  savePins(path, server, [[tool, entry]])
+}
+
+/** Re-read, merge several entries for one server, and replace the file atomically (one write). */
+export function savePins(path: string, server: string, entries: Array<[string, PinEntry]>): void {
+  for (const [, entry] of entries) {
+    if (!HASH_RE.test(entry.hash)) throw new Error(`refusing to pin malformed hash '${entry.hash}'`)
+  }
   const current = loadPinFile(path)
   const tools = Object.hasOwn(current.servers, server) ? { ...current.servers[server] } : {}
-  tools[tool] = entry
+  for (const [tool, entry] of entries) tools[tool] = entry
   const next: PinFile = { version: 1, servers: { ...current.servers, [server]: tools } }
   mkdirSync(dirname(path), { recursive: true })
   const tmp = `${path}.${process.pid}.tmp`

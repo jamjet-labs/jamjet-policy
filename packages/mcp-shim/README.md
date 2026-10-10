@@ -62,7 +62,10 @@ Other 2026-07-28 behaviour:
 - Server-initiated requests are refused once the client has spoken 2026-07-28 (the spec forbids them on stdio and replaces them with `input_required` results).
 - Policy, pins and audit all use the tool name from the JSON-RPC body, which is what the server executes. stdio has no header layer; the same check validates `Mcp-Method` / `Mcp-Name` against the body for HTTP transports and refuses a mismatch with `HeaderMismatch` (`-32020`).
 - The shim re-serialises every message it forwards, so a line with a repeated `"name"` key reaches the server with the one name the policy evaluated.
-- JSON-RPC batches and a `tools/call` whose `name` is not a string are refused, never forwarded ungoverned.
+- JSON-RPC batches and a `tools/call` whose `name` is not a string are refused, never forwarded ungoverned. So is a request with a missing or non-string, non-number `id`.
+- Server responses are matched to requests by id type and value (`"3"` does not answer request `3`); a response to no pending request is dropped.
+- Keys that differ only by case (`"Name"` next to `"name"`, or `"Method"`) are refused in both directions, because some parsers (Go's `encoding/json`) match keys case-insensitively and would read a different message than the shim.
+- Messages nested deeper than 256 levels are refused before any recursive code sees them.
 
 ## Tool-definition pinning
 
@@ -89,9 +92,9 @@ A blocked call returns JSON-RPC error `-32000` with a decision record in `error.
 }
 ```
 
-The same block is written to the audit log (`rule: pin:<reason>`) and, for a changed or unpinned tool, to `mcp-receipts.jsonl`. Review the new definition, then run the `approve` command; the next call is served without restarting. `jamjet-mcp-shim pins list` prints the pin file.
+The same block is written to the audit log (`rule: pin:<reason>`) and, for a changed or unpinned tool, to `mcp-receipts.jsonl`. Review the new definition, then run the `approve` command; the next call is served without restarting. A call that waited for human approval is checked against its pin again before it is forwarded. `jamjet-mcp-shim pins list` prints the pin file.
 
-Definitions are also scanned for invisible and control characters (zero-width characters, bidi controls, the Unicode TAG block, variation selectors outside a single emoji presentation selector, control characters other than tab, newline and carriage return). These are blocked by default; `mcp.invisible_unicode: warn` forwards the tool and logs instead. Other reasons a tool is blocked: `tool_not_pinned` (allowlist), `duplicate_tool_definition` (same name advertised twice with different definitions), `tool_not_listed`, `pin_file_unreadable` (a malformed pin file blocks rather than reading as empty).
+Definitions are also scanned for invisible and control characters (zero-width characters, bidi controls, the Unicode TAG block, variation selectors outside a single emoji presentation selector, control characters other than tab, newline and carriage return). These are blocked by default; `mcp.invisible_unicode: warn` forwards the tool and logs instead. Other reasons a tool is blocked: `tool_not_pinned` (allowlist, or past the limit of 500 first-sight pins per process), `ambiguous_definition` (a field name that differs from a pinned field only by case), `definition_too_deep` (nested deeper than 64 levels), `duplicate_tool_definition` (same name advertised twice with different definitions), `tool_not_listed`, `pin_file_unreadable` (a malformed pin file blocks rather than reading as empty).
 
 Pinning covers the advertised definition, not the code that runs behind it.
 

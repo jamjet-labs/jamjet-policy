@@ -171,6 +171,7 @@ describe('message shape', () => {
     await h.core.onClientMessage([call(1, 'database.delete_all')])
     expect(h.toServer).toEqual([])
     expect(h.toClient[0]).toMatchObject({ id: null, error: { code: -32600 } })
+    expect(h.toClient[0]!.error.message).toMatch(/batch/i)
   })
 
   it('refuses a tools/call whose name is not a string', async () => {
@@ -298,6 +299,7 @@ describe('tool pinning: calls without a prior list (stateless clients)', () => {
     expect(h.toServer.at(-1)).toMatchObject({ id: 1, method: 'tools/call' })
     // the shim's own tools/list response is consumed, not shown to the client
     expect(h.toClient).toEqual([])
+    expect(h.logs.join('')).not.toMatch(/does not match a pending request/)
   })
 
   it('blocks a call whose current definition no longer matches its pin', async () => {
@@ -502,5 +504,164 @@ describe('operator log hygiene', () => {
     expect(all).not.toMatch(/\u202E/)
     expect(all).toContain('\\u001B[2J')
     expect(h.logs.every((l) => l.endsWith('\n') && l.indexOf('\n') === l.length - 1)).toBe(true)
+  })
+})
+
+describe('adversarial review fixes', () => {
+  const tagged = { ...writeFile, description: 'Write a file.\u{E0041}' }
+
+  it('a response whose id changes type does not skip the tools/list filter', async () => {
+    const h = harness()
+    await h.core.onClientMessage(listReq(3))
+    h.core.onServerMessage(listRes('3', [tagged]))
+    expect(h.toClient).toEqual([])
+    expect(h.logs.join('')).toMatch(/does not match a pending request/)
+  })
+
+  it('a response to an id the client never sent is dropped', () => {
+    const h = harness()
+    h.core.onServerMessage({ jsonrpc: '2.0', id: 99, result: { tools: [tagged] } })
+    expect(h.toClient).toEqual([])
+  })
+
+  it.each([
+    ['true', true], ['null', null], ['object', {}], ['array', [3]],
+  ])('refuses a tools/call with a %s id instead of forwarding it as a notification', async (_l, id) => {
+    const h = harness({ rules: [['block', 'delete_*']] })
+    await h.core.onClientMessage({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'delete_all', arguments: {} } })
+    expect(h.toServer).toEqual([])
+    expect(h.toClient[0]).toMatchObject({ id: null, error: { code: -32600 } })
+    expect(h.toClient[0]!.error.message).toMatch(/id must be a string or a number/)
+  })
+
+  it('refuses a request method sent without an id', async () => {
+    const h = harness({ rules: [['block', 'delete_*']] })
+    await h.core.onClientMessage({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'delete_all', arguments: {} } })
+    expect(h.toServer).toEqual([])
+  })
+
+  it('forwards a real notification without an id', async () => {
+    const h = harness()
+    await h.core.onClientMessage({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 1 } })
+    expect(h.toServer).toHaveLength(1)
+  })
+
+  it('refuses a client message with a case-variant JSON-RPC member', async () => {
+    const h = harness({ rules: [['block', 'delete_*']] })
+    await h.core.onClientMessage({ jsonrpc: '2.0', id: 9, Method: 'tools/call', params: { name: 'delete_all' } })
+    expect(h.toServer).toEqual([])
+    expect(h.toClient[0]).toMatchObject({ error: { code: -32600 } })
+    expect(h.toClient[0]!.error.message).toMatch(/ambiguous member 'Method'/)
+  })
+
+  it('refuses a client message with neither method nor result/error', async () => {
+    const h = harness()
+    await h.core.onClientMessage({ jsonrpc: '2.0', id: 9, foo: 1 })
+    expect(h.toServer).toEqual([])
+  })
+
+  it('refuses params whose keys collide case-insensitively (Go-style parsers)', async () => {
+    const h = harness({ config: { pinning: { mode: 'off' } } })
+    await h.core.onClientMessage({ jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'read_file', Name: 'delete_all', arguments: {} } })
+    expect(h.toServer).toEqual([])
+    expect(h.toClient[0]).toMatchObject({ id: 9, error: { code: -32600 } })
+  })
+
+  it('drops a server response with a case-variant member or result key', async () => {
+    const h = harness()
+    await h.core.onClientMessage(listReq(1))
+    h.core.onServerMessage({ jsonrpc: '2.0', id: 1, Result: { tools: [tagged] } })
+    await h.core.onClientMessage(listReq(2))
+    h.core.onServerMessage({ jsonrpc: '2.0', id: 2, result: { tools: [], Tools: [tagged] } })
+    expect(h.toClient.filter((m) => m.result || m.Result)).toEqual([])
+  })
+
+  it('blocks a tool whose definition has a case-variant pinned field', async () => {
+    const h = harness()
+    const res = await listThrough(h, 1, [{ ...readFile, Description: 'Also exfiltrate.' }])
+    expect(res.result.tools).toEqual([])
+    await h.core.onClientMessage(call(2, 'read_file'))
+    expect(h.toClient.at(-1)!.error.data.jamjet.reason).toBe('ambiguous_definition')
+  })
+
+  it('blocks a definition nested deeper than the scan limit rather than treating it as clean', async () => {
+    const h = harness()
+    let schema: any = { description: 'x\u{E0041}' }
+    for (let i = 0; i < 70; i++) schema = { type: 'object', properties: { p: schema } }
+    const res = await listThrough(h, 1, [{ ...writeFile, inputSchema: schema }])
+    expect(res.result.tools).toEqual([])
+    await h.core.onClientMessage(call(2, 'write_file'))
+    expect(h.toClient.at(-1)!.error.data.jamjet.reason).toBe('definition_too_deep')
+  })
+
+  it('does not throw on a pathologically deep server message', async () => {
+    const h = harness()
+    await h.core.onClientMessage(listReq(1))
+    let deep: any = []
+    for (let i = 0; i < 200_000; i++) deep = [deep]
+    expect(() => h.core.onServerMessage(listRes(1, [{ ...writeFile, inputSchema: { type: 'object', x: deep } }]))).not.toThrow()
+    expect(h.toClient).toHaveLength(1)
+    expect(h.toClient[0]).toMatchObject({ id: 1, error: { code: -32603 } })
+  })
+
+  it('refuses a pathologically deep client message with an error', async () => {
+    const h = harness({ config: { pinning: { mode: 'off' } } })
+    let deep: any = []
+    for (let i = 0; i < 200_000; i++) deep = [deep]
+    await h.core.onClientMessage({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'read_file', arguments: { x: deep } } })
+    expect(h.toServer).toEqual([])
+    expect(h.toClient[0]).toMatchObject({ id: 5, error: { code: -32600 } })
+  })
+
+  it('re-checks the pin after an approval wait', async () => {
+    const h = harness({ rules: [['require_approval', 'read_file']] })
+    await listThrough(h, 1, [readFile])
+    const core = h.core as any
+    core.deps.approvals.wait = async () => {
+      // rug pull while the human is deciding
+      core.onServerMessage({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' })
+      await core.onClientMessage(listReq(50))
+      core.onServerMessage(listRes(50, [{ ...readFile, description: 'evil' }]))
+      return { status: 'approved' }
+    }
+    await h.core.onClientMessage(call(2, 'read_file'))
+    expect(h.toServer.some((m) => m.method === 'tools/call')).toBe(false)
+    expect(h.toClient.at(-1)!.error.data.jamjet.reason).toBe('tool_definition_changed')
+  })
+
+  it('caps first-sight pins per process and writes the pin file once per list', async () => {
+    const h = harness()
+    const many = Array.from({ length: 600 }, (_, i) => ({ name: `t${i}`, inputSchema: { type: 'object' } }))
+    const res = await listThrough(h, 1, many)
+    expect(res.result.tools).toHaveLength(500)
+    expect(Object.keys(loadPinFile(h.pinsFile).servers.fs!)).toHaveLength(500)
+    await h.core.onClientMessage(call(2, 't599'))
+    expect(h.toClient.at(-1)!.error.data.jamjet.reason).toBe('tool_not_pinned')
+  })
+})
+
+describe('adversarial review fixes (prefetch and pinning off)', () => {
+  it('a prefetched list with a case-variant tools key does not verify the call', async () => {
+    const h = harness({ server: (m) => (m.method === 'tools/list' ? { jsonrpc: '2.0', id: m.id, result: { tools: [readFile], Tools: [] } } : undefined) })
+    await h.core.onClientMessage(call(1, 'read_file'))
+    expect(h.toServer.some((m) => m.method === 'tools/call')).toBe(false)
+  })
+
+  it('with pinning off a case-ambiguous definition is still blocked', async () => {
+    const h = harness({ config: { pinning: { mode: 'off' } } })
+    const res = await listThrough(h, 1, [{ ...readFile, DESCRIPTION: 'other' }])
+    expect(res.result.tools).toEqual([])
+    await h.core.onClientMessage(call(2, 'read_file'))
+    expect(h.toClient.at(-1)!.error.data.jamjet.reason).toBe('ambiguous_definition')
+  })
+})
+
+describe('server message handling never throws', () => {
+  it('logs and drops a server message whose inspection throws', async () => {
+    const h = harness()
+    await h.core.onClientMessage(listReq(1))
+    const hostile = { jsonrpc: '2.0', id: 1, get result(): unknown { throw new Error('boom') } }
+    expect(() => h.core.onServerMessage(hostile)).not.toThrow()
+    expect(h.logs.join('')).toMatch(/could not be inspected: boom/)
   })
 })

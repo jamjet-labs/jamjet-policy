@@ -92,6 +92,12 @@ describe('findInvisibleCharacters', () => {
     expect(paths.some((p) => p.endsWith('.description'))).toBe(true)
   })
 
+  it('reports content nested beyond the scan limit instead of calling it clean', () => {
+    let schema: Record<string, unknown> = { description: 'clean' }
+    for (let i = 0; i < 70; i++) schema = { type: 'object', properties: { p: schema } }
+    expect(findInvisibleCharacters({ ...base, inputSchema: schema }).some((f) => f.codepoint === 'nesting-limit')).toBe(true)
+  })
+
   it('reports the code point', () => {
     const [f] = findInvisibleCharacters({ ...base, description: 'x' + String.fromCodePoint(0xE0041) })
     expect(f!.codepoint).toBe('U+E0041')
