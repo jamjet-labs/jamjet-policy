@@ -6,7 +6,7 @@
 // requests (400) and server faults (500). The require_approval hold maps to a deny whose
 // context carries step-up instructions, which the AuthZen spec explicitly permits.
 import type { AuthzAction, AuthzHttpResult } from './types.js'
-import { holdStatus, consumeIfApproved, type AuthzDepsV2 } from './handle.js'
+import { holdStatus, consumeIfApproved, APPROVAL_RACED_REASON, type AuthzDepsV2 } from './handle.js'
 import { decidePolicy } from './policy.js'
 import { buildPolicyReceipt, appendReceipt } from './receipt.js'
 
@@ -48,7 +48,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 // Parse one AuthZen evaluation request (subject/action/resource[/context]) into the
 // policy-engine action. Returns a string error label on any shape violation: the caller
 // fails closed with a 400 rather than evaluating a guessed action.
-function parseEvaluation(req: Record<string, unknown>, defaultServer: string): AuthzAction | string {
+function parseEvaluation(req: Record<string, unknown>, deps: AuthzDepsV2): AuthzAction | string {
   const subject = req.subject
   if (!isPlainObject(subject) || typeof subject.type !== 'string' || typeof subject.id !== 'string') {
     return 'subject with string type and id is required'
@@ -69,13 +69,28 @@ function parseEvaluation(req: Record<string, unknown>, defaultServer: string): A
     if (hasForbiddenKey(props.arguments)) return 'arguments must not contain __proto__, constructor, or prototype keys'
     args = props.arguments
   }
-  const server = typeof props.server === 'string' ? props.server : defaultServer
+  const server = typeof props.server === 'string' ? props.server : deps.defaultServer
+  const cedar = Boolean(deps.cedar)
 
-  // The PEP authenticated the subject; its string properties become Cedar principal
-  // tags (the AgentCore pattern: JWT claims as tags). Non-string values are skipped.
+  // With Cedar, resource.id must name the tool being evaluated (the action name, or the
+  // Cedar Tool id "<server>___<tool>"). A PEP that put a different tool there would
+  // otherwise get a decision about something other than what it asked.
+  if (cedar && resource.id !== action.name && resource.id !== `${server}___${action.name}`) {
+    return `resource.id '${resource.id}' does not name the tool '${action.name}' on server '${server}'`
+  }
+
+  // The PEP authenticated the subject; its properties become Cedar principal tags (the
+  // AgentCore pattern: JWT claims as tags). Booleans and numbers become their string
+  // form so `principal.hasTag("suspended")` fires for `suspended: true`. With Cedar
+  // loaded, an array or object claim is a 400: silently dropping it would make a
+  // forbid on that tag dead.
   const tags: Record<string, string> = {}
   if (isPlainObject(subject.properties)) {
-    for (const [k, v] of Object.entries(subject.properties)) if (typeof v === 'string') tags[k] = v
+    for (const [k, v] of Object.entries(subject.properties)) {
+      if (typeof v === 'string') tags[k] = v
+      else if (typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v))) tags[k] = String(v)
+      else if (cedar) return `subject.properties.${k} must be a string, number, or boolean`
+    }
   }
   const runId = typeof tags.run_id === 'string' ? tags.run_id : undefined
   // Only risk is read from the request context. approval_status is JamJet's own hold
@@ -105,6 +120,11 @@ function evaluateOne(action: AuthzAction, deps: AuthzDepsV2): AuthZenDecision {
   }
   if (verdict.kind === 'ALLOW') {
     const approved = consumeIfApproved(deps, existing)
+    if (approved === 'raced') {
+      const receipt = buildPolicyReceipt(action, 'BLOCKED', verdict.matchedPattern, deps.now())
+      appendReceipt(deps.auditPath, receipt)
+      return { decision: false, context: { reason: APPROVAL_RACED_REASON, receipt: receipt.receipt_hash } }
+    }
     const receipt = buildPolicyReceipt(action, 'ALLOWED', verdict.matchedPattern, deps.now(), approved)
     appendReceipt(deps.auditPath, receipt)
     return { decision: true, context: { receipt: receipt.receipt_hash } }
@@ -114,12 +134,17 @@ function evaluateOne(action: AuthzAction, deps: AuthzDepsV2): AuthZenDecision {
   if (existing) {
     const status = deps.holds.peek(existing.run_id)
     if (status === 'approved') {
+      // Allow only if this request is the one that consumed the approval.
+      if (!deps.holds.consume(existing.run_id)) {
+        const receipt = buildPolicyReceipt(action, 'BLOCKED', verdict.matchedPattern, deps.now())
+        appendReceipt(deps.auditPath, receipt)
+        return { decision: false, context: { reason: APPROVAL_RACED_REASON, receipt: receipt.receipt_hash } }
+      }
       const receipt = buildPolicyReceipt(action, 'ALLOWED', verdict.matchedPattern, deps.now(), {
         run_id: existing.run_id,
         status: 'approved',
       })
       appendReceipt(deps.auditPath, receipt)
-      deps.holds.consume(existing.run_id)
       return { decision: true, context: { receipt: receipt.receipt_hash } }
     }
     if (status === 'rejected') {
@@ -211,7 +236,7 @@ export function handleAuthZen(
   if (!isPlainObject(parsed)) return respond(400, { error: 'invalid_request' }, headers)
 
   if (path === AUTHZEN_EVALUATION_PATH) {
-    const action = parseEvaluation(parsed, deps.defaultServer)
+    const action = parseEvaluation(parsed, deps)
     if (typeof action === 'string') return respond(400, { error: 'invalid_request', detail: action }, headers)
     return respond(200, evaluateOne(action, deps), headers)
   }
@@ -221,7 +246,7 @@ export function handleAuthZen(
     // Spec: an absent or empty evaluations array behaves as a single Access Evaluation
     // over the top-level fields, returning the single-eval shape.
     if (rawItems === undefined || (Array.isArray(rawItems) && rawItems.length === 0)) {
-      const action = parseEvaluation(parsed, deps.defaultServer)
+      const action = parseEvaluation(parsed, deps)
       if (typeof action === 'string') return respond(400, { error: 'invalid_request', detail: action }, headers)
       return respond(200, evaluateOne(action, deps), headers)
     }
@@ -245,7 +270,7 @@ export function handleAuthZen(
             context: item.context ?? parsed.context,
           }
         : {}
-      const action = parseEvaluation(merged, deps.defaultServer)
+      const action = parseEvaluation(merged, deps)
       if (typeof action === 'string') {
         return respond(400, { error: 'invalid_request', detail: `invalid evaluation: ${action}` }, headers)
       }

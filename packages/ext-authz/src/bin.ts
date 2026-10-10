@@ -31,7 +31,7 @@ const defaultServer = opt(argv, '--server-name', 'mcp')!
 const approvalBaseUrl = opt(argv, '--approval-url', `http://localhost:${port}/approve`)!
 
 // A Cedar flag given without a value must not quietly fall back to "no Cedar".
-for (const flag of ['--cedar', '--cedar-schema', '--principal-header']) {
+for (const flag of ['--cedar', '--cedar-schema', '--principal-header', '--server-header']) {
   const i = argv.indexOf(flag)
   if (i >= 0 && (argv[i + 1] === undefined || argv[i + 1]!.startsWith('--'))) {
     process.stderr.write(`${flag} needs a value\n`)
@@ -41,6 +41,11 @@ for (const flag of ['--cedar', '--cedar-schema', '--principal-header']) {
 const cedarPath = opt(argv, '--cedar')
 const cedarSchemaPath = opt(argv, '--cedar-schema')
 const principalHeader = opt(argv, '--principal-header')
+const serverHeader = opt(argv, '--server-header')
+if ((principalHeader || serverHeader) && !cedarPath) {
+  process.stderr.write('--principal-header and --server-header only apply with --cedar\n')
+  process.exit(2)
+}
 if (cedarSchemaPath && !cedarPath) {
   process.stderr.write('--cedar-schema needs --cedar <policies.cedar>\n')
   process.exit(2)
@@ -63,6 +68,7 @@ const server = createServer({
   evaluator: buildEvaluator(policyPath),
   cedar,
   ...(principalHeader ? { principalHeader } : {}),
+  ...(serverHeader ? { serverHeader } : {}),
   auditPath,
   now: () => new Date().toISOString(),
   defaultServer,
