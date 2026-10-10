@@ -1,0 +1,6 @@
+// Default argument schema: no tool arguments are visible to policies.
+// Replace it with your own JamJet::Input namespace to write conditions on
+// arguments (for example context.input.amount).
+namespace JamJet::Input {
+  type ToolInput = {};
+}
