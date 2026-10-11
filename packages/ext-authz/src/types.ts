@@ -1,7 +1,13 @@
+import type { AgentPrincipal } from '@jamjet/cedar'
+
 export interface AuthzAction {
   server: string
   tool: string
   args: Record<string, unknown>
+  /** The caller, when the enforcement point identifies one. Binds holds to it. */
+  principal?: AgentPrincipal
+  /** Risk label asserted by the enforcement point (AuthZen context.risk). */
+  risk?: string
 }
 
 export type PolicyVerdict =

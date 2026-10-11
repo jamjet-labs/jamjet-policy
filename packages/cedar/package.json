@@ -1,0 +1,56 @@
+{
+  "name": "@jamjet/cedar",
+  "version": "0.1.0",
+  "description": "Cedar policies for JamJet: load and validate Cedar against a published agent tool-call schema, evaluate per tool call, and compose with JamJet YAML rules (deny wins, fail closed).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "schema",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --shims --clean",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cedar-policy/cedar-wasm": "4.13.0",
+    "@jamjet/mcp-threat": "^0.1.0",
+    "@jamjet/cloud": "^0.3.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "tsup": "^8.0.0",
+    "vitest": "^2.0.0",
+    "@types/node": "^20.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "cedar",
+    "ai-agents",
+    "agent-safety",
+    "authorization",
+    "mcp",
+    "ai-governance",
+    "policy"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jamjet-labs/jamjet-policy.git",
+    "directory": "packages/cedar"
+  }
+}

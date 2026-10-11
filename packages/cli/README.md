@@ -20,6 +20,19 @@ jamjet reject  <run-id>
 
 Audit events are read from `~/.jamjet/audit/<YYYY-MM-DD>/<adapter>.jsonl`. Pending approvals live in `~/.jamjet/pending/<run-id>.json`.
 
+### Policy (YAML and Cedar)
+
+```bash
+jamjet policy validate --policy policy.yaml --cedar policies.cedar --cedar-schema input.cedarschema
+jamjet policy explain --tool process_refund --server RefundTool --args '{"amount": 450}' \
+  --agent user-123 --tag username=refund-agent --cedar policies.cedar --cedar-schema input.cedarschema
+```
+
+`validate` exits 1 if either file does not load. Cedar policies are checked in strict
+mode against the schema in [`@jamjet/cedar`](../cedar). `explain` prints what the YAML
+rules decide, what Cedar decides and why, and which one wins (`--json` for the full
+decisions). Only files passed on the command line are read.
+
 ### Cloud Sync
 
 ```bash

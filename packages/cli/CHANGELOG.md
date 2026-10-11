@@ -1,5 +1,15 @@
 # @jamjet/cli
 
+## 0.3.0
+
+### Added
+- `jamjet policy validate` checks a YAML policy file and a Cedar policy set (with an
+  optional `JamJet::Input` argument schema) and exits 1 on any problem.
+- `jamjet policy explain` shows the YAML decision, the Cedar decision with the
+  determining policy ids or errors, the combined result for one tool call, and what
+  `jamjet-ext-authz` then does given the hold state (`--approval-status`). `--kind`
+  sets the principal kind.
+
 ## 0.1.0 — 2026-05-11
 
 ### Added

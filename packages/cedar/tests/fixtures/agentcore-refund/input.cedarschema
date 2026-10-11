@@ -1,0 +1,8 @@
+// Tool argument types for the refund example (orderId, amount, reason).
+namespace JamJet::Input {
+  type ToolInput = {
+    orderId?: String,
+    amount?: Long,
+    reason?: String
+  };
+}

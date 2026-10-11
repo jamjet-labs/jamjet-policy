@@ -23,5 +23,33 @@ status in `context`, and an approved hold permits exactly once. Batch evaluation
 `POST /access/v1/evaluations` with all three `evaluations_semantic` options (64-item
 cap). Paths outside `/access/*` keep the Envoy HTTP ext_authz contract.
 
+## Cedar policies
+
+    jamjet-ext-authz --policy ./policy.yaml --cedar ./policies.cedar --cedar-schema ./input.cedarschema
+
+Cedar policies run alongside the YAML rules on both surfaces and the stricter outcome
+wins (block, then hold, then allow). See [`@jamjet/cedar`](../cedar) for the schema and
+the `@require_approval` annotation. The server refuses to start if the Cedar policies
+do not parse and validate. Any Cedar evaluation error blocks the call.
+
+The Cedar principal is `JamJet::Agent::"<id>"`. On the AuthZen surface it is
+`subject.id`, with `subject.properties` as tags (numbers and booleans become strings;
+an array or object claim is a 400) and `context.risk` as the risk label. `resource.id`
+must be the tool name or `<server>___<tool>`. On the ext_authz surface it is `anonymous` unless you pass
+`--principal-header <name>`; only do that when your proxy overwrites that header,
+since otherwise any client can claim any identity.
+
+With Cedar loaded, the ext_authz surface no longer reads the server name from `Host`
+or `x-jamjet-server`, because `resource in JamJet::Server::"..."` would then be
+chosen by the client. The server is `--server-name` (default `mcp`), or the header
+named by `--server-header <name>` (lowercased, port and trailing dot stripped; a
+missing header blocks). Run one PDP per upstream or have the proxy set that header
+per route. `context.approval_status` comes
+from the hold store, never from the request. Every approval is single-use, and a
+request is allowed on an approval only if it is the one that consumed it. When a principal is known, holds
+are bound to it and to its kind, claims, and risk, so an approval granted in one
+context is not spent in another. The hold record stores the principal and risk for
+the approver.
+
 This is the OSS reference adapter. gRPC ext_authz with `dynamic_metadata` receipt
 correlation, and a Rust-native PDP, are follow-ups behind the same wire contract.

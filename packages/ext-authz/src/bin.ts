@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { homedir } from 'node:os'
-import { buildEvaluator } from './policy.js'
+import { CedarLoadError } from '@jamjet/cedar'
+import { buildEvaluator, buildCedar } from './policy.js'
 import { createServer } from './server.js'
 import { createHoldStore } from './hold.js'
 
@@ -29,12 +30,50 @@ const auditPath = opt(argv, '--audit', `${homedir()}/.jamjet/audit/ext-authz-rec
 const defaultServer = opt(argv, '--server-name', 'mcp')!
 const approvalBaseUrl = opt(argv, '--approval-url', `http://localhost:${port}/approve`)!
 
+// A Cedar flag given without a value must not quietly fall back to "no Cedar".
+// Every occurrence is checked: `--cedar a.cedar --cedar` must not pass on the first.
+const CEDAR_FLAGS = new Set(['--cedar', '--cedar-schema', '--principal-header', '--server-header'])
+argv.forEach((a, i) => {
+  if (CEDAR_FLAGS.has(a) && (argv[i + 1] === undefined || argv[i + 1]!.startsWith('--'))) {
+    process.stderr.write(`${a} needs a value\n`)
+    process.exit(2)
+  }
+})
+const cedarPath = opt(argv, '--cedar')
+const cedarSchemaPath = opt(argv, '--cedar-schema')
+const principalHeader = opt(argv, '--principal-header')
+const serverHeader = opt(argv, '--server-header')
+if ((principalHeader || serverHeader) && !cedarPath) {
+  process.stderr.write('--principal-header and --server-header only apply with --cedar\n')
+  process.exit(2)
+}
+if (cedarSchemaPath && !cedarPath) {
+  process.stderr.write('--cedar-schema needs --cedar <policies.cedar>\n')
+  process.exit(2)
+}
+
+// Fail closed at startup: a Cedar policy set that does not load and validate is never
+// skipped, the PDP refuses to start instead.
+let cedar = null
+if (cedarPath) {
+  try {
+    cedar = buildCedar(cedarPath, cedarSchemaPath)
+  } catch (e) {
+    process.stderr.write(e instanceof CedarLoadError ? `${e.message}\n` : `failed to load Cedar policies: ${(e as Error).message}\n`)
+    process.exit(1)
+  }
+  for (const w of cedar.warnings) process.stderr.write(`cedar warning: ${w}\n`)
+}
+
 const server = createServer({
   evaluator: buildEvaluator(policyPath),
+  cedar,
+  ...(principalHeader ? { principalHeader } : {}),
+  ...(serverHeader ? { serverHeader } : {}),
   auditPath,
   now: () => new Date().toISOString(),
   defaultServer,
   holds: createHoldStore(holdDir),
   approvalBaseUrl,
 })
-server.listen(port, () => process.stderr.write(`jamjet-ext-authz listening on :${port} (holds: ${holdDir})\n`))
+server.listen(port, () => process.stderr.write(`jamjet-ext-authz listening on :${port} (holds: ${holdDir}${cedar ? `, cedar: ${cedar.policyIds.length} policies` : ''})\n`))

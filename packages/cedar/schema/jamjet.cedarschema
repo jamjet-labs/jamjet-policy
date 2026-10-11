@@ -1,0 +1,37 @@
+// JamJet agent tool-call schema, version 1.
+// Every Cedar policy loaded by @jamjet/cedar is validated against this schema
+// (strict mode), joined with a JamJet::Input namespace that types tool arguments.
+namespace JamJet {
+  // An MCP server, gateway target, or tool namespace. Tools are members of it.
+  entity Server;
+
+  // The calling agent or user. Tags carry string identity claims
+  // (for example JWT claims supplied by the policy enforcement point).
+  entity Agent {
+    kind: String,
+    run_id: String
+  } tags String;
+
+  // The tool being called. Entity id is "<server>___<tool>", the same shape as
+  // AgentCore Gateway MCP action names, so ported policies keep their ids.
+  entity Tool in [Server] {
+    name: String,
+    server: String
+  };
+
+  // One tool call.
+  //   args_digest:     sha256 of the canonical JSON arguments
+  //   risk:            risk label supplied by the enforcement point, "unknown" if absent
+  //   approval_status: hold state for this exact call: none, pending, approved, rejected
+  //   input:           the tool arguments, typed by JamJet::Input::ToolInput
+  action "call_tool" appliesTo {
+    principal: [Agent],
+    resource: [Tool],
+    context: {
+      args_digest: String,
+      risk: String,
+      approval_status: String,
+      input: JamJet::Input::ToolInput
+    }
+  };
+}

@@ -28,6 +28,31 @@ importers:
 
   examples/mcp-shim-postgres: {}
 
+  packages/cedar:
+    dependencies:
+      '@cedar-policy/cedar-wasm':
+        specifier: 4.13.0
+        version: 4.13.0
+      '@jamjet/cloud':
+        specifier: ^0.3.1
+        version: 0.3.1
+      '@jamjet/mcp-threat':
+        specifier: ^0.1.0
+        version: 0.1.0
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.40
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.14)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9(@types/node@20.19.40)
+
   packages/claude-code-hook:
     dependencies:
       '@jamjet/cloud':
@@ -52,6 +77,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@jamjet/cedar':
+        specifier: workspace:*
+        version: link:../cedar
       '@jamjet/cloud':
         specifier: ^0.3.0
         version: 0.3.0
@@ -98,6 +126,9 @@ importers:
 
   packages/ext-authz:
     dependencies:
+      '@jamjet/cedar':
+        specifier: workspace:*
+        version: link:../cedar
       '@jamjet/cloud':
         specifier: ^0.3.1
         version: 0.3.1
@@ -185,6 +216,9 @@ importers:
         version: 2.1.9(@types/node@20.19.40)
 
 packages:
+
+  '@cedar-policy/cedar-wasm@4.13.0':
+    resolution: {integrity: sha512-1omEd/J0c7RjcfSUWiXZc6zk6XUs1IuY7Yk9TVysoKV/LpFWIk45RpjvRFVioPUR3RQmgA/DaqKhK3pucbBx1A==}
 
   '@esbuild/aix-ppc64@0.21.5':
     resolution: {integrity: sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ==}
@@ -1598,6 +1632,8 @@ packages:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
 snapshots:
+
+  '@cedar-policy/cedar-wasm@4.13.0': {}
 
   '@esbuild/aix-ppc64@0.21.5':
     optional: true
