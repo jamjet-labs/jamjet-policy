@@ -161,3 +161,56 @@ describe('handleServeSelfRequest', () => {
     expect(r.error?.code).toBe(-32601)
   })
 })
+
+describe('serve-self speaks MCP 2026-07-28 as well as the legacy handshake', () => {
+  const META = { 'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientCapabilities': {} }
+  const ctx = ctxFromRules([{ match: '*delete*', action: 'block' }])
+
+  it('answers server/discover with supported versions and capabilities', () => {
+    const res = handleServeSelfRequest({ jsonrpc: '2.0', id: 'd', method: 'server/discover', params: { _meta: META } }, ctx) as any
+    expect(res.result.resultType).toBe('complete')
+    expect(res.result.supportedVersions).toContain('2026-07-28')
+    expect(res.result.supportedVersions).toContain('2025-11-25')
+    expect(res.result.capabilities).toEqual({ tools: {} })
+    expect(res.result.ttlMs).toBeGreaterThanOrEqual(0)
+    expect(['public', 'private']).toContain(res.result.cacheScope)
+    expect(res.result._meta['io.modelcontextprotocol/serverInfo'].name).toBe('jamjet-policy')
+  })
+
+  it('answers a server/discover probe that carries no _meta as a modern result', () => {
+    const res = handleServeSelfRequest({ jsonrpc: '2.0', id: 'p', method: 'server/discover' }, ctx) as any
+    expect(res.result.resultType).toBe('complete')
+    expect(res.result.supportedVersions).toContain('2026-07-28')
+  })
+
+  it('serves a stateless tools/list with resultType and cache fields', () => {
+    const res = handleServeSelfRequest({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: { _meta: META } }, ctx) as any
+    expect(res.result.resultType).toBe('complete')
+    expect(res.result.tools.map((t: { name: string }) => t.name)).toEqual(POLICY_TOOL_NAMES)
+    expect(typeof res.result.ttlMs).toBe('number')
+    expect(res.result.cacheScope).toBe('public')
+  })
+
+  it('serves a stateless tools/call with resultType', () => {
+    const res = handleServeSelfRequest({
+      jsonrpc: '2.0', id: 2, method: 'tools/call',
+      params: { name: 'policy_evaluate', arguments: { tool_name: 'db.delete_all' }, _meta: META },
+    }, ctx) as any
+    expect(res.result.resultType).toBe('complete')
+    expect(res.result.content[0].text).toMatch(/block/)
+  })
+
+  it('refuses an unknown per-request version with -32022', () => {
+    const res = handleServeSelfRequest({
+      jsonrpc: '2.0', id: 3, method: 'tools/list',
+      params: { _meta: { 'io.modelcontextprotocol/protocolVersion': '2099-01-01' } },
+    }, ctx) as any
+    expect(res.error.code).toBe(-32022)
+    expect(res.error.data.supported).toContain('2026-07-28')
+  })
+
+  it('leaves legacy responses unchanged (no resultType)', () => {
+    const res = handleServeSelfRequest({ jsonrpc: '2.0', id: 4, method: 'tools/list' }, ctx) as any
+    expect(res.result.resultType).toBeUndefined()
+  })
+})

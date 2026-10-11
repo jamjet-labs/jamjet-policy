@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import { runShim } from './shim.js'
 import { runServeSelf } from './serve-self.js'
+import { runPinsCommand } from './pins-cli.js'
 
 interface ShimArgs {
   mode: 'shim'
   policyPath?: string
   serverName: string
+  pinsPath?: string
   command: string
   args: string[]
 }
@@ -19,8 +21,10 @@ type ParsedArgs = ShimArgs | ServeSelfArgs
 
 const USAGE = [
   'Usage:',
-  '  jamjet-mcp-shim [--policy <path>] [--server <name>] -- <mcp-server> [args...]',
+  '  jamjet-mcp-shim [--policy <path>] [--server <name>] [--pins <file>] -- <mcp-server> [args...]',
   '  jamjet-mcp-shim --serve-self [--policy <path>]',
+  '  jamjet-mcp-shim pins approve --server <name> --tool <name> --hash sha256:<hex> [--pins <file>]',
+  '  jamjet-mcp-shim pins list [--pins <file>]',
   '',
   'Modes:',
   '  shim         (default) — intercept tools/call to the downstream MCP server',
@@ -51,13 +55,21 @@ function parseArgs(): ParsedArgs {
   }
   const policyFlag = flags.indexOf('--policy')
   const serverFlag = flags.indexOf('--server')
+  const pinsFlag = flags.indexOf('--pins')
   return {
     mode: 'shim',
     policyPath: policyFlag >= 0 ? flags[policyFlag + 1] : undefined,
+    pinsPath: pinsFlag >= 0 ? flags[pinsFlag + 1] : undefined,
     serverName: serverFlag >= 0 ? (flags[serverFlag + 1] ?? 'mcp') : 'mcp',
     command: cmd[0]!,
     args: cmd.slice(1),
   }
+}
+
+if (process.argv[2] === 'pins') {
+  const r = runPinsCommand(process.argv.slice(3))
+  ;(r.code === 0 ? process.stdout : process.stderr).write(r.out + '\n')
+  process.exit(r.code)
 }
 
 const opts = parseArgs()

@@ -1,27 +1,21 @@
 import { PolicyEvaluator, type CloudPusher } from '@jamjet/cloud'
 import { loadPolicy, AuditWriter, ApprovalQueue } from '@jamjet/cloud/node'
-import { JsonRpcStream, type JsonRpcRequest } from './jsonrpc.js'
+import { JsonRpcStream } from './jsonrpc.js'
 import { Supervisor } from './supervisor.js'
-import { interceptToolsCall, blockResponse } from './tools-call.js'
 import {
   buildCloudPusher,
   pushAuditEvent,
   resolveArgsRedaction,
-  traceIdFromMcpRequest,
   type ArgsRedactionMode,
 } from './cloud-push.js'
 import {
   loadTrustBaseline,
   loadThreatConfig,
-  evaluateToolsList,
-  evaluateCall,
   buildMcpSecurityReceipt,
   appendReceipt,
-  strictest,
-  type Decision,
-  type ThreatFinding,
 } from '@jamjet/mcp-threat'
-import { isToolsListResult, extractToolsFromListResponse } from './tools-list.js'
+import { ShimCore } from './core.js'
+import { loadShimConfig, resolvePolicyPath } from './shim-config.js'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -30,6 +24,8 @@ export interface ShimOptions {
   serverName: string
   command: string
   args: string[]
+  /** Override the tool pin file (else policy mcp.pinning.file, JAMJET_TOOL_PINS, default). */
+  pinsPath?: string
   /** Inject a CloudPusher; undefined falls back to env-driven detection. */
   cloudPusher?: CloudPusher | null
   /** R9 args redaction for events leaving the host. Defaults to env or 'full'. */
@@ -41,6 +37,12 @@ export async function runShim(options: ShimOptions): Promise<number | null> {
   const evaluator = new PolicyEvaluator()
   for (const r of policy.rules) evaluator.add(r.action, r.match)
 
+  // Read the mcp:/threat: blocks from the same file loadPolicy resolved, so an
+  // auto-discovered policy is not treated as "no settings".
+  const resolvedPolicyPath = resolvePolicyPath(options.policyPath)
+  const config = loadShimConfig(resolvedPolicyPath)
+  if (options.pinsPath) config.pinning.file = options.pinsPath
+
   const auditDir = policy.audit?.destination?.replace(/^~/, homedir()) ?? join(homedir(), '.jamjet', 'audit')
   const pendingDir = join(homedir(), '.jamjet', 'pending')
   const audit = new AuditWriter({ destination: auditDir, adapter: 'mcp-shim' })
@@ -48,101 +50,46 @@ export async function runShim(options: ShimOptions): Promise<number | null> {
 
   const pusher = options.cloudPusher === undefined ? buildCloudPusher() : options.cloudPusher
   const redactionMode = resolveArgsRedaction(options.argsRedaction)
-
-  const baseline = loadTrustBaseline()
-  const threatConfig = loadThreatConfig(options.policyPath)
   const receiptsPath = join(auditDir, 'mcp-receipts.jsonl')
-  let serverUnverified = false
-  const flagged = new Map<string, ThreatFinding>()
 
-  const emitReceipt = (finding: ThreatFinding, decision: Decision, action: 'tools/call' | 'tools/list') => {
-    appendReceipt(receiptsPath, buildMcpSecurityReceipt(finding, decision, action, new Date().toISOString()))
-  }
+  const supervisor = new Supervisor({ command: options.command, args: options.args })
+  const core = new ShimCore({
+    serverName: options.serverName,
+    evaluator,
+    config,
+    threatBaseline: loadTrustBaseline(),
+    threatConfig: loadThreatConfig(resolvedPolicyPath),
+    toClient: (m) => process.stdout.write(JsonRpcStream.encode(m as never)),
+    toServer: (m) => supervisor.writeStdin(JsonRpcStream.encode(m as never)),
+    log: (line) => process.stderr.write(line),
+    audit: (e) => {
+      audit.write({ ...e, host: 'claude-desktop' })
+      if (pusher) {
+        pushAuditEvent({
+          pusher, run_id: e.run_id, serverName: e.server, tool: e.tool, args: e.args,
+          decision: e.decision, rule: e.rule, rule_kind: e.rule_kind, executed: e.executed,
+          trace_id: e.trace_id, redactionMode,
+        })
+      }
+    },
+    receipt: (finding, decision, action) =>
+      appendReceipt(receiptsPath, buildMcpSecurityReceipt(finding, decision, action, new Date().toISOString())),
+    approvals: {
+      enqueue: (req) => approvals.enqueue({ ...req, adapter: 'mcp-shim' }),
+      wait: (runId) => approvals.wait(runId),
+    },
+  })
 
   const upstream = new JsonRpcStream()   // from client (stdin)
   const downstream = new JsonRpcStream() // from real server (subprocess stdout)
-  const supervisor = new Supervisor({ command: options.command, args: options.args })
-
-  upstream.on('message', async (msg) => {
-    if ('method' in msg && msg.method === 'tools/call') {
-      const intercept = interceptToolsCall(msg as JsonRpcRequest, evaluator)
-      if (!intercept) {
-        supervisor.writeStdin(JsonRpcStream.encode(msg))
-        return
-      }
-      const threat = evaluateCall({
-        server: options.serverName,
-        tool: intercept.tool,
-        args: intercept.args,
-        flagged,
-        serverUnverified,
-        config: threatConfig,
-      })
-      const combinedDecision = strictest(intercept.decision as Decision, threat.decision.decision)
-      const threatDrove = threat.decision.finding !== null &&
-        threat.decision.decision === combinedDecision &&
-        intercept.decision !== combinedDecision
-      if (threat.decision.finding && combinedDecision !== 'ALLOWED') {
-        emitReceipt(threat.decision.finding, combinedDecision, 'tools/call')
-      }
-      const ruleLabel = threatDrove ? `threat:${threat.decision.finding!.risk_class}` : intercept.rule
-      const ruleKind = threatDrove ? null : intercept.rule_kind
-      const run_id = `run_${Date.now().toString(36)}`
-      const executed = combinedDecision === 'ALLOWED' || combinedDecision === 'AUDIT'
-      const trace_id = traceIdFromMcpRequest((msg as JsonRpcRequest).params)
-      audit.write({
-        run_id, trace_id, host: 'claude-desktop',
-        server: options.serverName, tool: intercept.tool, args: intercept.args,
-        decision: combinedDecision, rule: ruleLabel, rule_kind: ruleKind, executed,
-      })
-      if (pusher) {
-        pushAuditEvent({
-          pusher, run_id, serverName: options.serverName, tool: intercept.tool, args: intercept.args,
-          decision: combinedDecision, rule: ruleLabel, rule_kind: ruleKind, executed, trace_id, redactionMode,
-        })
-      }
-      if (combinedDecision === 'BLOCKED') {
-        process.stdout.write(JsonRpcStream.encode(blockResponse((msg as JsonRpcRequest).id, ruleLabel)))
-        return
-      }
-      if (combinedDecision === 'WAITING_FOR_APPROVAL') {
-        const runId = approvals.enqueue({ tool: intercept.tool, args: intercept.args, adapter: 'mcp-shim' })
-        process.stderr.write(`JamJet: ${intercept.tool} waiting approval — run \`jamjet approve ${runId}\`\n`)
-        const result = await approvals.wait(runId)
-        if (result.status === 'approved') {
-          supervisor.writeStdin(JsonRpcStream.encode(msg))
-        } else {
-          process.stdout.write(JsonRpcStream.encode(blockResponse((msg as JsonRpcRequest).id, ruleLabel)))
-        }
-        return
-      }
-      supervisor.writeStdin(JsonRpcStream.encode(msg))
-    } else {
-      supervisor.writeStdin(JsonRpcStream.encode(msg))
-    }
+  upstream.on('message', (msg) => {
+    core.onClientMessage(msg).catch((err) => process.stderr.write(`JamJet: error handling client message: ${(err as Error).message}\n`))
   })
-
-  downstream.on('message', (msg) => {
-    if (isToolsListResult(msg)) {
-      try {
-        const tools = extractToolsFromListResponse(msg)
-        const evalResult = evaluateToolsList(options.serverName, tools, baseline, threatConfig)
-        serverUnverified = evalResult.serverUnverified
-        flagged.clear()
-        for (const [name, f] of evalResult.flagged) flagged.set(name, f)
-        if (evalResult.decision.finding) {
-          emitReceipt(evalResult.decision.finding, evalResult.decision.decision, 'tools/list')
-          process.stderr.write(
-            `JamJet threat: ${evalResult.decision.finding.risk_class} on ${options.serverName} ` +
-            `(${evalResult.decision.decision})\n`,
-          )
-        }
-      } catch (err) {
-        process.stderr.write(`JamJet threat: tools/list evaluation error (forwarding unscanned): ${(err as Error).message}\n`)
-      }
-    }
-    process.stdout.write(JsonRpcStream.encode(msg))
+  upstream.on('error', () => {
+    process.stdout.write(JsonRpcStream.encode({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } } as never))
   })
+  downstream.on('message', (msg) => core.onServerMessage(msg))
+  downstream.on('error', (err) => process.stderr.write(`JamJet: dropped unparseable server output: ${err.message}\n`))
 
   process.stdin.on('data', (b: Buffer) => upstream.feed(b))
   supervisor.onStdout((b: Buffer) => downstream.feed(b))

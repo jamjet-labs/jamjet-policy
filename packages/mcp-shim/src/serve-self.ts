@@ -1,6 +1,7 @@
 import type { Policy, PolicyEvaluator } from '@jamjet/cloud'
 import { JsonRpcStream, type JsonRpcRequest, type JsonRpcResponse } from './jsonrpc.js'
 import { bootstrapPolicy, type PolicySource } from './bootstrap-policy.js'
+import { classifyClientRequestVersion, unsupportedVersionError, KNOWN_VERSIONS } from './protocol.js'
 
 export const POLICY_TOOL_NAMES = ['policy_evaluate', 'policy_list_rules', 'policy_load_info'] as const
 
@@ -72,15 +73,57 @@ export function buildServeSelfTools(): ToolDefinition[] {
 
 const SERVER_INFO = {
   name: 'jamjet-policy',
-  version: '0.2.0',
+  version: '0.3.0',
 } as const
+
+/** The tool catalogue is fixed for the life of the process and carries no user data. */
+const TOOLS_TTL_MS = 3_600_000
 
 const PROTOCOL_VERSION = '2024-11-05'
 
+/**
+ * Dual-era: a legacy client opens with `initialize`; a 2026-07-28 client sends
+ * its protocol version on every request and may probe with `server/discover`.
+ */
 export function handleServeSelfRequest(
   req: JsonRpcRequest,
   ctx: ServeSelfContext,
 ): JsonRpcResponse {
+  const version = classifyClientRequestVersion(req)
+  if (version.kind === 'unknown' && req.method !== 'initialize') {
+    return unsupportedVersionError(req.id, version.version)
+  }
+  const modern = (version.kind === 'known' && version.era === 'modern') || req.method === 'server/discover'
+  const response = handleRequest(req, ctx)
+  if (!modern || !response.result || typeof response.result !== 'object') return response
+  const result = response.result as Record<string, unknown>
+  return {
+    ...response,
+    result: {
+      resultType: 'complete',
+      ...result,
+      _meta: { ...(result._meta as object | undefined), 'io.modelcontextprotocol/serverInfo': SERVER_INFO },
+    },
+  }
+}
+
+function handleRequest(
+  req: JsonRpcRequest,
+  ctx: ServeSelfContext,
+): JsonRpcResponse {
+  if (req.method === 'server/discover') {
+    return {
+      jsonrpc: '2.0',
+      id: req.id,
+      result: {
+        supportedVersions: [...KNOWN_VERSIONS],
+        capabilities: { tools: {} },
+        ttlMs: TOOLS_TTL_MS,
+        cacheScope: 'public',
+      },
+    }
+  }
+
   if (req.method === 'initialize') {
     return {
       jsonrpc: '2.0',
@@ -99,7 +142,7 @@ export function handleServeSelfRequest(
     return {
       jsonrpc: '2.0',
       id: req.id,
-      result: { tools: buildServeSelfTools() },
+      result: { tools: buildServeSelfTools(), ttlMs: TOOLS_TTL_MS, cacheScope: 'public' },
     }
   }
 
