@@ -20,7 +20,9 @@ describe('CapEnforcer', () => {
   })
 
   it('no-op when under cap', () => {
-    outbox.insert('{"a":1}', '2026-05-12T00:00:00Z')
+    // CapEnforcer ages events against Date.now(), so the event must be recent
+    // relative to the real clock: one day old, inside the 7-day window.
+    outbox.insert('{"a":1}', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
     const enforcer = new CapEnforcer({
       outbox,
       droppedLogPath: join(dir, 'dropped.log'),
