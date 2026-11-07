@@ -1,93 +1,73 @@
 #!/usr/bin/env node
-import { evaluateHookInput, type HookInput } from './hook.js'
-import { PolicyEvaluator } from '@jamjet/cloud'
-import { loadPolicy, AuditWriter } from '@jamjet/cloud/node'
-import {
-  buildCloudPusher,
-  pushAuditEvent,
-  resolveArgsRedaction,
-  traceIdFromEnv,
-} from './cloud-push.js'
+// Claude Code treats exit 2 from a PreToolUse hook as "block" and any other
+// non-zero exit as a non-blocking error that lets the tool run. Every way out
+// of this process other than an explicit allow or ask must therefore exit 2,
+// including a crash and a failed import. Only node: built-ins are imported
+// statically; the rest loads inside the try below.
+import { writeSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import type { HookOutcome } from './run.js'
 
-async function main(): Promise<void> {
-  const args = process.argv.slice(2)
-  const policyFlag = args.indexOf('--policy')
-  const policyPath = policyFlag >= 0 ? args[policyFlag + 1] : undefined
-
-  const policy = loadPolicy(policyPath)
-  const evaluator = new PolicyEvaluator()
-  for (const rule of policy.rules) {
-    evaluator.add(rule.action, rule.match)
-  }
-
-  // Read stdin
-  const stdinChunks: Buffer[] = []
-  for await (const chunk of process.stdin) {
-    stdinChunks.push(chunk as Buffer)
-  }
-  const raw = Buffer.concat(stdinChunks).toString('utf-8').trim()
-
-  let input: HookInput
-  try {
-    input = JSON.parse(raw) as HookInput
-  } catch {
-    process.stderr.write('jamjet-hook: invalid JSON on stdin\n')
-    process.exit(1)
-  }
-
-  const result = evaluateHookInput(input, evaluator)
-
-  // Write audit event
-  const auditDir = policy.audit?.destination?.replace(/^~/, homedir()) ?? join(homedir(), '.jamjet', 'audit')
-  const writer = new AuditWriter({ destination: auditDir, adapter: 'claude-code-hook' })
-  const run_id = `run_${Date.now().toString(36)}`
-  const executed = result.decision === 'ALLOWED' || result.decision === 'AUDIT'
-  const trace_id = traceIdFromEnv()
-  writer.write({
-    run_id,
-    trace_id,
-    host: 'claude-code',
-    server: result.server,
-    tool: result.effective_tool,
-    args: input.tool_input,
-    decision: result.decision,
-    rule: result.rule,
-    rule_kind: result.rule_kind,
-    executed,
-  })
-
-  // Path B direct-push (when JAMJET_CLOUD_TOKEN + env says direct).
-  const pusher = buildCloudPusher()
-  if (pusher) {
-    pushAuditEvent({
-      pusher,
-      run_id,
-      tool: result.effective_tool,
-      args: input.tool_input,
-      decision: result.decision,
-      rule: result.rule,
-      rule_kind: result.rule_kind,
-      executed,
-      server: result.server,
-      trace_id,
-      redactionMode: resolveArgsRedaction(),
-    })
-  }
-
-  // Stderr feedback
-  if (result.decision === 'BLOCKED') {
-    process.stderr.write(`JamJet policy: BLOCKED (rule: ${result.rule})\n`)
-  } else if (result.decision === 'WAITING_FOR_APPROVAL') {
-    process.stderr.write(`JamJet policy: WAITING_FOR_APPROVAL (rule: ${result.rule}) — approval flow not yet implemented in v0.1; treating as block\n`)
-  }
-
-  process.exit(result.exit_code)
+function message(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
 }
 
-main().catch((err: unknown) => {
-  const msg = err instanceof Error ? err.message : String(err)
-  process.stderr.write(`jamjet-hook: ${msg}\n`)
-  process.exit(1)
-})
+function writeAll(fd: number, text: string): void {
+  const buf = Buffer.from(text, 'utf-8')
+  let offset = 0
+  while (offset < buf.length) offset += writeSync(fd, buf, offset)
+}
+
+let finished = false
+
+function finish(outcome: HookOutcome): void {
+  if (finished) return
+  finished = true
+  let code: number = outcome.exitCode
+  let stderr = outcome.stderr
+  if (outcome.stdout) {
+    try {
+      writeAll(1, outcome.stdout)
+    } catch (err) {
+      // An ask decision that never reaches Claude Code reads as exit 0 with no
+      // output, which is an allow. Block instead.
+      code = 2
+      stderr += `jamjet-hook: blocking tool call: could not write the decision to stdout: ${message(err)}\n`
+    }
+  }
+  if (stderr) {
+    try {
+      writeAll(2, stderr)
+    } catch {
+      // Nothing else to report to; the exit code still carries the decision.
+    }
+  }
+  process.exit(code)
+}
+
+function failClosed(err: unknown): void {
+  finish({ exitCode: 2, stdout: '', stderr: `jamjet-hook: blocking tool call: ${message(err)}\n` })
+}
+
+// Only finish() writes to fd 1, with writeSync. Anything else printing to
+// stdout (a dependency's debug logging, for example yaml with LOG_TOKENS set)
+// would corrupt the JSON decision, and Claude Code reads stdout that is not
+// one JSON object as plain text, which lets the call go ahead without asking.
+process.stdout.write = process.stderr.write.bind(process.stderr) as typeof process.stdout.write
+
+process.on('uncaughtException', failClosed)
+process.on('unhandledRejection', failClosed)
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = []
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer)
+  return Buffer.concat(chunks).toString('utf-8').trim()
+}
+
+async function main(): Promise<void> {
+  const { runHook } = await import('./run.js')
+  const stdin = await readStdin()
+  finish(await runHook({ argv: process.argv.slice(2), env: process.env, stdin, home: homedir() }))
+}
+
+main().catch(failClosed)

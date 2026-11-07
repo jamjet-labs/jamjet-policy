@@ -66,11 +66,12 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Test
-        run: pnpm test
-
+      # Build BEFORE Test: tests/bin.test.ts spawns dist/bin.js.
       - name: Build
         run: pnpm build
+
+      - name: Test
+        run: pnpm test
 
       - name: Publish to npm with provenance
         # Use npx to fetch a fresh npm without overwriting the system bundle.
