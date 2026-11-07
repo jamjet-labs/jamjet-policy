@@ -1,11 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { evaluateHookInput } from '../src/hook.js'
-import { PolicyEvaluator } from '@jamjet/cloud'
+import type { HookRule } from '../src/policy.js'
 
-function evaluator(rules: Array<['allow' | 'block' | 'require_approval' | 'audit', string]>) {
-  const ev = new PolicyEvaluator()
-  for (const [action, pattern] of rules) ev.add(action, pattern)
-  return ev
+function evaluator(rules: Array<['allow' | 'block' | 'require_approval' | 'audit', string]>): HookRule[] {
+  return rules.map(([action, match]) => ({ action, match }))
 }
 
 describe('evaluateHookInput', () => {
@@ -17,7 +15,7 @@ describe('evaluateHookInput', () => {
     )
     expect(r.decision).toBe('BLOCKED')
     expect(r.rule).toBe('*delete*')
-    expect(r.exit_code).toBe(2)
+    expect(r.rule_kind).toBe('block')
   })
 
   it('ALLOWED for no match', () => {
@@ -27,7 +25,6 @@ describe('evaluateHookInput', () => {
       ev,
     )
     expect(r.decision).toBe('ALLOWED')
-    expect(r.exit_code).toBe(0)
     expect(r.rule).toBeNull()
   })
 
@@ -42,23 +39,90 @@ describe('evaluateHookInput', () => {
     expect(r.server).toBe('pg')
   })
 
-  it('WAITING_FOR_APPROVAL for approval rules (exit 2)', () => {
+  it('WAITING_FOR_APPROVAL for approval rules', () => {
     const ev = evaluator([['require_approval', 'payments.*']])
     const r = evaluateHookInput(
       { tool_name: 'payments.refund', tool_input: { amount: 100 } },
       ev,
     )
     expect(r.decision).toBe('WAITING_FOR_APPROVAL')
-    expect(r.exit_code).toBe(2)
+    expect(r.rule).toBe('payments.*')
   })
 
-  it('AUDIT (exit 0)', () => {
+  it('AUDIT for audit rules', () => {
     const ev = evaluator([['audit', 'slack.send_message']])
     const r = evaluateHookInput(
       { tool_name: 'slack.send_message', tool_input: {} },
       ev,
     )
     expect(r.decision).toBe('AUDIT')
-    expect(r.exit_code).toBe(0)
+  })
+
+  describe('MCP tools', () => {
+    it('an allow for a built-in name does not allow an MCP tool of that name', () => {
+      const ev = evaluator([['allow', 'Read'], ['block', '*']])
+      expect(evaluateHookInput({ tool_name: 'Read', tool_input: {} }, ev).decision).toBe('ALLOWED')
+      const r = evaluateHookInput({ tool_name: 'mcp__evil__Read', tool_input: {} }, ev)
+      expect(r.decision).toBe('BLOCKED')
+      expect(r.rule).toBe('*')
+    })
+
+    it('a full-name allow works ahead of a catch-all block', () => {
+      const ev = evaluator([['allow', 'mcp__github__*'], ['block', '*']])
+      expect(evaluateHookInput({ tool_name: 'mcp__github__create_issue', tool_input: {} }, ev).decision).toBe('ALLOWED')
+      expect(evaluateHookInput({ tool_name: 'mcp__gitlab__create_issue', tool_input: {} }, ev).decision).toBe('BLOCKED')
+    })
+
+    it('block, ask and audit rules also match the bare MCP tool name', () => {
+      const ev = evaluator([['block', 'delete_rows'], ['require_approval', 'merge_pull_request'], ['audit', 'search']])
+      expect(evaluateHookInput({ tool_name: 'mcp__pg__delete_rows', tool_input: {} }, ev).decision).toBe('BLOCKED')
+      expect(evaluateHookInput({ tool_name: 'mcp__github__merge_pull_request', tool_input: {} }, ev).decision).toBe(
+        'WAITING_FOR_APPROVAL',
+      )
+      expect(evaluateHookInput({ tool_name: 'mcp__web__search', tool_input: {} }, ev).decision).toBe('AUDIT')
+    })
+  })
+  describe('MCP server names with __ or edge underscores', () => {
+    const ev = evaluator([['block', 'delete_rows'], ['require_approval', 'merge_pull_request']])
+    const cases: Array<[string, string, string]> = [
+      ['mcp__pg___delete_rows', 'pg_', 'BLOCKED'],
+      ['mcp___pg__delete_rows', '_pg', 'BLOCKED'],
+      ['mcp__a__b__delete_rows', 'a__b', 'BLOCKED'],
+      ['mcp__gh__x__merge_pull_request', 'gh__x', 'WAITING_FOR_APPROVAL'],
+    ]
+    it.each(cases)('%s without mcp_server: every split is checked', (tool, _server, decision) => {
+      expect(evaluateHookInput({ tool_name: tool, tool_input: {} }, ev).decision).toBe(decision)
+    })
+    it.each(cases)('%s with mcp_server.name %s: exact strip', (tool, server, decision) => {
+      const r = evaluateHookInput({ tool_name: tool, tool_input: {}, mcp_server: { name: server } }, ev)
+      expect(r.decision).toBe(decision)
+      expect(r.server).toBe(server)
+    })
+
+    it('with mcp_server.name the split is exact: x__merge_pull_request on server gh is a different tool', () => {
+      const r = evaluateHookInput(
+        { tool_name: 'mcp__gh__x__merge_pull_request', tool_input: {}, mcp_server: { name: 'gh' } },
+        ev,
+      )
+      expect(r.decision).toBe('ALLOWED')
+      expect(r.effective_tool).toBe('x__merge_pull_request')
+    })
+
+    it('normalises the server name the way Claude Code does before stripping', () => {
+      const r = evaluateHookInput(
+        { tool_name: 'mcp__gh_x__a__merge_pull_request', tool_input: {}, mcp_server: { name: 'gh.x' } },
+        ev,
+      )
+      expect(r.decision).toBe('ALLOWED')
+      expect(r.effective_tool).toBe('a__merge_pull_request')
+    })
+
+    it('falls back to every split when mcp_server.name does not match the tool name', () => {
+      const r = evaluateHookInput(
+        { tool_name: 'mcp__a__b__delete_rows', tool_input: {}, mcp_server: { name: 'other' } },
+        ev,
+      )
+      expect(r.decision).toBe('BLOCKED')
+    })
   })
 })

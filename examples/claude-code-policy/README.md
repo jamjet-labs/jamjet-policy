@@ -1,13 +1,18 @@
 # Claude Code policy example
 
-Drop this `policy.yaml` into your `~/.jamjet/` and reference it from `~/.config/claude-code/settings.json`:
+Drop this `policy.yaml` into your `~/.jamjet/` and reference it from `~/.claude/settings.json` (or a project's `.claude/settings.json`):
 
-```jsonc
+```json
 {
   "hooks": {
-    "PreToolUse": [{ "command": "jamjet-hook --policy ~/.jamjet/policy.yaml" }]
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [{ "type": "command", "command": "jamjet-hook --policy ~/.jamjet/policy.yaml" }]
+      }
+    ]
   }
 }
 ```
 
-Then run Claude Code. Any tool call matching `*delete*`, `*drop*`, or `shell.exec` is blocked. `payments.*`, `filesystem.write`, and `github.merge_pull_request` pause (and currently surface as block + audit). `slack.send_message` is logged but allowed.
+Then run Claude Code. Any tool whose name contains `delete` or `drop` is blocked, which covers MCP tools such as `mcp__postgres__delete_rows`. The three tools that run shell commands (`Bash`, `PowerShell` and `Monitor`), `Write`, and GitHub's `merge_pull_request` ask you first; in `plan` or `bypassPermissions` mode they are blocked instead. `WebFetch` calls are logged and allowed. Rules match the tool name only, not its arguments.
