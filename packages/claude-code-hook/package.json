@@ -1,6 +1,6 @@
 {
   "name": "@jamjet/claude-code-hook",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "JamJet policy + audit + approval as a Claude Code PreToolUse hook. One policy file, every Claude Code session.",
   "type": "module",
   "bin": {

@@ -14,17 +14,29 @@ npx @jamjet/claude-code-hook
 
 ## Wire it up
 
-In `~/.config/claude-code/settings.json`:
+Add the hook to `~/.claude/settings.json` (every project) or `.claude/settings.json` (one project):
 
-```jsonc
+```json
 {
   "hooks": {
     "PreToolUse": [
-      { "command": "jamjet-hook --policy ~/.jamjet/policy.yaml" }
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jamjet-hook --policy ~/.jamjet/policy.yaml"
+          }
+        ]
+      }
     ]
   }
 }
 ```
+
+`"matcher": "*"` sends every tool call, MCP tools included, through the policy. Rules match on the tool name (`Bash`, `Edit`, `WebFetch`, or for MCP tools the name after the `mcp__<server>__` prefix), not on its arguments. A call that no rule matches goes through unchanged and Claude Code's own permission prompts still apply.
+
+On Claude Code 2.1.295 or later, also set `"onFailure": "block"` next to `"command"`. Then a missing binary or a timeout blocks the call too, instead of letting it run.
 
 ## See it in 60 seconds
 
@@ -35,24 +47,46 @@ cat > ~/.jamjet/policy.yaml <<'EOF'
 version: 1
 rules:
   - { match: "*delete*", action: block }
-  - { match: "shell.exec", action: block }
-  - { match: "payments.*", action: require_approval }
+  - { match: "WebFetch", action: require_approval }
 EOF
 
 # Test the hook directly:
-echo '{"tool_name":"database.delete_all_customers","tool_input":{}}' | jamjet-hook --policy ~/.jamjet/policy.yaml
+echo '{"hook_event_name":"PreToolUse","permission_mode":"default","tool_name":"mcp__postgres__delete_rows","tool_input":{}}' | jamjet-hook --policy ~/.jamjet/policy.yaml
 echo "exit: $?"
 # JamJet policy: BLOCKED (rule: *delete*)
 # exit: 2
+
+echo '{"hook_event_name":"PreToolUse","permission_mode":"default","tool_name":"WebFetch","tool_input":{}}' | jamjet-hook --policy ~/.jamjet/policy.yaml
+echo "exit: $?"
+# {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"JamJet policy: approval required (rule: WebFetch)"}}
+# exit: 0
 ```
 
-Then wire into Claude Code's `settings.json` (above) and every tool call — including MCP tools — runs through this policy.
+## What the hook returns
 
-## What you get
+| Policy result | Hook output | Claude Code |
+|---|---|---|
+| `block` | exit 2, reason on stderr | blocks the call and shows Claude the reason |
+| `require_approval` | exit 0, `permissionDecision: "ask"` on stdout | asks you before the call runs |
+| `require_approval` in `auto` or `bypassPermissions` mode | exit 2, reason on stderr | blocks the call |
+| `allow`, `audit`, or no matching rule | exit 0, no output | normal permission flow |
+| any error | exit 2, reason on stderr | blocks the call |
 
-- **Block** unsafe tools at runtime — before Claude Code invokes them
-- **Pause for approval** on risky tools (`require_approval` action; approval flow lands in a near-term release — v0.1 surfaces as a block + audit event)
-- **Audit JSONL** at `~/.jamjet/audit/<YYYY-MM-DD>/claude-code-hook.jsonl`
+In `auto` mode a classifier answers the prompt and in `bypassPermissions` mode it is skipped, so an approval rule would let the call run with nobody asked. The hook only asks in `default`, `acceptEdits`, `plan` and `dontAsk` modes and blocks in any other mode, or when the input has no `permission_mode`.
+
+Errors include an unreadable or invalid policy, an unknown action such as `blok`, an unknown flag, and stdin that is not a PreToolUse event. Claude Code treats any exit code other than 0 or 2 as a non-blocking error and runs the tool, so the hook never uses one.
+
+## Which policy file
+
+1. `--policy <path>` (a leading `~/` is expanded)
+2. `JAMJET_POLICY_FILE`, or `JAMJET_POLICY` (if both are set to different files, the hook blocks)
+3. `~/.jamjet/policy.yaml`
+
+The working directory is never searched, so a repository cannot ship a `policy.yaml` that replaces yours. Pass `--policy` in the settings command: it wins over the environment variables, which a project's `.claude/settings.json` can set through its `env` block.
+
+## Audit log
+
+Every decision is appended to `~/.jamjet/audit/<YYYY-MM-DD>/claude-code-hook.jsonl` (or under `audit.destination` from the policy) before the hook exits. If that write fails, the call is blocked. To let calls through without an audit record, add `--allow-audit-failure` to the command; a `block` decision still blocks.
 
 ## How MCP tools are matched
 
@@ -63,14 +97,14 @@ rules:
   - { match: "*delete*", action: block }
 ```
 
-…blocks both `database.delete_all_customers` (a native tool) **and** `mcp__postgres__delete_all_customers` (an MCP tool). Policies remain MCP-server-agnostic.
+…blocks `mcp__postgres__delete_all_customers` and `mcp__sqlite__delete_rows` alike. Policies remain MCP-server-agnostic.
 
 ## Same policy, other places
 
 The same `policy.yaml` is consumed by:
 
-- **MCP stdio traffic** via [`@jamjet/mcp-shim`](https://npm.im/@jamjet/mcp-shim) *(coming next)*
-- **OpenAI Agents SDK** via [`@jamjet/openai-guardrail`](https://npm.im/@jamjet/openai-guardrail) *(coming next)*
+- **MCP stdio traffic** via [`@jamjet/mcp-shim`](https://npm.im/@jamjet/mcp-shim)
+- **OpenAI Agents SDK** via [`@jamjet/openai-guardrail`](https://npm.im/@jamjet/openai-guardrail)
 - **JamJet Python SDK** via [`jamjet`](https://pypi.org/project/jamjet/) on PyPI
 - **JamJet TS SDK** via [`@jamjet/cloud`](https://www.npmjs.com/package/@jamjet/cloud) on npm
 

@@ -6,13 +6,13 @@ export interface HookInput {
   tool_name: string
   tool_input: Record<string, unknown>
   session_id?: string
+  permission_mode?: string
 }
 
 export interface HookResult {
   decision: 'ALLOWED' | 'BLOCKED' | 'WAITING_FOR_APPROVAL' | 'AUDIT'
   rule: string | null
   rule_kind: 'allow' | 'block' | 'require_approval' | 'audit' | null
-  exit_code: 0 | 2
   effective_tool: string
   server: string | null
 }
@@ -26,7 +26,6 @@ export function evaluateHookInput(input: HookInput, policy: PolicyEvaluator): Ho
       decision: 'BLOCKED',
       rule: d.pattern,
       rule_kind: 'block',
-      exit_code: 2,
       effective_tool: parsed.effective,
       server: parsed.server,
     }
@@ -36,7 +35,6 @@ export function evaluateHookInput(input: HookInput, policy: PolicyEvaluator): Ho
       decision: 'WAITING_FOR_APPROVAL',
       rule: d.pattern,
       rule_kind: 'require_approval',
-      exit_code: 2,
       effective_tool: parsed.effective,
       server: parsed.server,
     }
@@ -46,7 +44,6 @@ export function evaluateHookInput(input: HookInput, policy: PolicyEvaluator): Ho
       decision: 'AUDIT',
       rule: d.pattern,
       rule_kind: 'audit',
-      exit_code: 0,
       effective_tool: parsed.effective,
       server: parsed.server,
     }
@@ -55,7 +52,6 @@ export function evaluateHookInput(input: HookInput, policy: PolicyEvaluator): Ho
     decision: 'ALLOWED',
     rule: d.pattern ?? null,
     rule_kind: d.pattern ? 'allow' : null,
-    exit_code: 0,
     effective_tool: parsed.effective,
     server: parsed.server,
   }

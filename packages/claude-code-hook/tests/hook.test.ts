@@ -17,7 +17,7 @@ describe('evaluateHookInput', () => {
     )
     expect(r.decision).toBe('BLOCKED')
     expect(r.rule).toBe('*delete*')
-    expect(r.exit_code).toBe(2)
+    expect(r.rule_kind).toBe('block')
   })
 
   it('ALLOWED for no match', () => {
@@ -27,7 +27,6 @@ describe('evaluateHookInput', () => {
       ev,
     )
     expect(r.decision).toBe('ALLOWED')
-    expect(r.exit_code).toBe(0)
     expect(r.rule).toBeNull()
   })
 
@@ -42,23 +41,22 @@ describe('evaluateHookInput', () => {
     expect(r.server).toBe('pg')
   })
 
-  it('WAITING_FOR_APPROVAL for approval rules (exit 2)', () => {
+  it('WAITING_FOR_APPROVAL for approval rules', () => {
     const ev = evaluator([['require_approval', 'payments.*']])
     const r = evaluateHookInput(
       { tool_name: 'payments.refund', tool_input: { amount: 100 } },
       ev,
     )
     expect(r.decision).toBe('WAITING_FOR_APPROVAL')
-    expect(r.exit_code).toBe(2)
+    expect(r.rule).toBe('payments.*')
   })
 
-  it('AUDIT (exit 0)', () => {
+  it('AUDIT for audit rules', () => {
     const ev = evaluator([['audit', 'slack.send_message']])
     const r = evaluateHookInput(
       { tool_name: 'slack.send_message', tool_input: {} },
       ev,
     )
     expect(r.decision).toBe('AUDIT')
-    expect(r.exit_code).toBe(0)
   })
 })
