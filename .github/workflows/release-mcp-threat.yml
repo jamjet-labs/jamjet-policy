@@ -40,6 +40,26 @@ jobs:
             exit 1
           fi
 
+      # npm publish ships the workspace: protocol verbatim and no consumer can
+      # resolve it. Pin workspace siblings to a published version first. Node
+      # sets the exit code itself, so an error reading package.json also fails.
+      - name: Gate against workspace protocol in dependencies
+        run: |
+          node -e '
+            const p = require("./package.json")
+            const bad = []
+            for (const field of ["dependencies", "optionalDependencies", "peerDependencies"]) {
+              for (const [name, range] of Object.entries(p[field] ?? {})) {
+                if (String(range).includes("workspace:")) bad.push(`${field}.${name}: ${range}`)
+              }
+            }
+            if (bad.length > 0) {
+              console.log("workspace: ranges would ship unresolvable; pin to a published version first:")
+              for (const b of bad) console.log("  " + b)
+              process.exit(1)
+            }
+          '
+
       - name: Install
         run: cd ../.. && pnpm install --frozen-lockfile
 

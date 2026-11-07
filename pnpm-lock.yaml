@@ -17,6 +17,9 @@ importers:
       vitest:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@20.19.40)
+      yaml:
+        specifier: ^2.5.0
+        version: 2.9.0
 
   examples/agentgateway-demo:
     dependencies:
