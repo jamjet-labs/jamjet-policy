@@ -68,13 +68,13 @@ echo "exit: $?"
 |---|---|---|
 | `block` | exit 2, reason on stderr | blocks the call and shows Claude the reason |
 | `require_approval` | exit 0, `permissionDecision: "ask"` on stdout | asks you before the call runs |
-| `require_approval` in `auto` or `bypassPermissions` mode | exit 2, reason on stderr | blocks the call |
+| `require_approval` in `bypassPermissions` mode | exit 2, reason on stderr | blocks the call |
 | `allow`, `audit`, or no matching rule | exit 0, no output | normal permission flow |
 | any error | exit 2, reason on stderr | blocks the call |
 
-In `auto` mode a classifier answers the prompt and in `bypassPermissions` mode it is skipped, so an approval rule would let the call run with nobody asked. The hook only asks in `default`, `acceptEdits`, `plan` and `dontAsk` modes and blocks in any other mode, or when the input has no `permission_mode`.
+The ask goes through Claude Code's normal permission prompt, in `auto` mode too. `bypassPermissions` skips prompts and nothing documents that a hook's ask survives it, so there the hook blocks. It also blocks in a mode it doesn't know and when the input has no `permission_mode`. Whatever answers your permission prompts answers this one: you in an interactive session, or a `PermissionRequest` hook, a `--permission-prompt-tool` or a mod if you have one. In a `-p` run with none of those, Claude Code denies the call.
 
-Errors include an unreadable or invalid policy, an unknown action such as `blok`, an unknown flag, and stdin that is not a PreToolUse event. Claude Code treats any exit code other than 0 or 2 as a non-blocking error and runs the tool, so the hook never uses one.
+Errors include an unreadable or invalid policy, an unknown action such as `blok`, a rule whose `match` is empty or starts with `mcp__` (rules see MCP tools without that prefix, so it could never match), an `audit` block with unknown keys, an unknown flag, and stdin that is not a PreToolUse event. Claude Code treats any exit code other than 0 or 2 as a non-blocking error and runs the tool, so the hook never uses one.
 
 ## Which policy file
 
@@ -82,11 +82,11 @@ Errors include an unreadable or invalid policy, an unknown action such as `blok`
 2. `JAMJET_POLICY_FILE`, or `JAMJET_POLICY` (if both are set to different files, the hook blocks)
 3. `~/.jamjet/policy.yaml`
 
-The working directory is never searched, so a repository cannot ship a `policy.yaml` that replaces yours. Pass `--policy` in the settings command: it wins over the environment variables, which a project's `.claude/settings.json` can set through its `env` block.
+The path must be absolute after `~/` is expanded, and so must `HOME`. It must point at a regular file under 1 MiB. The working directory is never searched and relative paths are refused, so a repository cannot ship a `policy.yaml` that replaces yours. Pass `--policy` in the settings command: it wins over the environment variables, which a project's `.claude/settings.json` can set through its `env` block. A project's settings can still turn every hook off with `disableAllHooks`; only hooks in managed settings hold against that.
 
 ## Audit log
 
-Every decision is appended to `~/.jamjet/audit/<YYYY-MM-DD>/claude-code-hook.jsonl` (or under `audit.destination` from the policy) before the hook exits. If that write fails, the call is blocked. To let calls through without an audit record, add `--allow-audit-failure` to the command; a `block` decision still blocks.
+Every decision is appended to `~/.jamjet/audit/<YYYY-MM-DD>/claude-code-hook.jsonl` (or under `audit.destination` from the policy, which must be absolute after `~/` expansion) before the hook exits. If that write fails, the call is blocked. To let calls through without an audit record, add `--allow-audit-failure` to the command; a `block` decision still blocks.
 
 ## How MCP tools are matched
 

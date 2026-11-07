@@ -4,7 +4,7 @@
 // runs hooks with the project as cwd, so a cwd lookup would let any repository
 // ship a policy.yaml that replaces the user's own.
 
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 
 export interface HookArgs {
   policy?: string
@@ -47,22 +47,40 @@ export function expandHome(p: string, home: string): string {
 
 /**
  * `--policy <path>`, else `JAMJET_POLICY_FILE` (or its alias `JAMJET_POLICY`),
- * else `~/.jamjet/policy.yaml`. Nothing else is consulted.
+ * else `~/.jamjet/policy.yaml`. Nothing else is consulted, and the result must
+ * be absolute: a relative path would resolve against the project directory.
  */
 export function resolvePolicyPath(
   flag: string | undefined,
   env: Record<string, string | undefined>,
   home: string,
 ): ResolvedPolicyPath {
-  if (flag !== undefined) return { path: expandHome(flag, home), source: '--policy' }
+  if (!isAbsolute(home)) {
+    throw new Error(`home directory ${JSON.stringify(home)} is not an absolute path`)
+  }
 
+  let raw: string
+  let source: PolicySource
   const file = env.JAMJET_POLICY_FILE || undefined
   const alias = env.JAMJET_POLICY || undefined
-  if (file !== undefined && alias !== undefined && file !== alias) {
+  if (flag !== undefined) {
+    raw = flag
+    source = '--policy'
+  } else if (file !== undefined && alias !== undefined && file !== alias) {
     throw new Error('JAMJET_POLICY_FILE and JAMJET_POLICY are both set to different files; set one')
+  } else if (file !== undefined) {
+    raw = file
+    source = 'JAMJET_POLICY_FILE'
+  } else if (alias !== undefined) {
+    raw = alias
+    source = 'JAMJET_POLICY'
+  } else {
+    return { path: join(home, '.jamjet', 'policy.yaml'), source: 'default' }
   }
-  if (file !== undefined) return { path: expandHome(file, home), source: 'JAMJET_POLICY_FILE' }
-  if (alias !== undefined) return { path: expandHome(alias, home), source: 'JAMJET_POLICY' }
 
-  return { path: join(home, '.jamjet', 'policy.yaml'), source: 'default' }
+  const path = expandHome(raw, home)
+  if (!isAbsolute(path)) {
+    throw new Error(`${source} ${JSON.stringify(raw)} is a relative path, which would resolve against the project directory; use an absolute path`)
+  }
+  return { path, source }
 }

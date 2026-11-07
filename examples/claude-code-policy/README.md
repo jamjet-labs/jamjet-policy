@@ -15,4 +15,4 @@ Drop this `policy.yaml` into your `~/.jamjet/` and reference it from `~/.claude/
 }
 ```
 
-Then run Claude Code. Any tool call matching `*delete*`, `*drop*`, or `shell.exec` is blocked. For `payments.*`, `filesystem.write`, and `github.merge_pull_request`, Claude Code asks you before the call runs. `slack.send_message` is logged but allowed.
+Then run Claude Code. Any tool whose name contains `delete` or `drop` is blocked, which covers MCP tools such as `mcp__postgres__delete_rows`. `Bash`, `Write` and GitHub's `merge_pull_request` ask you first. `WebFetch` calls are logged and allowed. Rules match the tool name only, not its arguments.

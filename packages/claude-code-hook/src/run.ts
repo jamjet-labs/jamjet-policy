@@ -8,7 +8,8 @@
 
 import { PolicyEvaluator } from '@jamjet/cloud'
 import { loadPolicy, AuditWriter } from '@jamjet/cloud/node'
-import { join } from 'node:path'
+import { statSync } from 'node:fs'
+import { isAbsolute, join } from 'node:path'
 import { evaluateHookInput, type HookInput, type HookResult } from './hook.js'
 import { expandHome, parseArgs, resolvePolicyPath } from './options.js'
 import {
@@ -56,7 +57,7 @@ function run(opts: RunOptions): HookOutcome {
 
   let policy: Policy
   try {
-    policy = loadPolicy(policyPath)
+    policy = readPolicy(policyPath)
   } catch (err) {
     throw new Error(`policy ${policyPath}: ${errorMessage(err)}`)
   }
@@ -87,12 +88,12 @@ function run(opts: RunOptions): HookOutcome {
   return outcome
 }
 
-// Permission modes in which a hook's "ask" puts the call in front of a person
-// (or, in dontAsk, denies it). In bypassPermissions the prompt is skipped and
-// in auto mode a classifier answers it, so an approval rule would let the call
-// run with nobody asked. Those modes, unknown modes, and a missing
-// permission_mode get a block instead.
-const MODES_THAT_ASK_A_PERSON = new Set(['default', 'acceptEdits', 'plan', 'dontAsk'])
+// Permission modes in which a hook's "ask" reaches Claude Code's permission
+// prompt (in dontAsk, a denial). Auto mode shows hook prompts too; the
+// classifier does not answer them. bypassPermissions skips prompts and the
+// docs do not say a hook's "ask" survives that, so it gets a block, as do
+// unknown modes and a missing permission_mode.
+const MODES_THAT_ASK_A_PERSON = new Set(['default', 'acceptEdits', 'plan', 'auto', 'dontAsk'])
 
 function outcomeFor(result: HookResult, permissionMode: string | undefined): HookOutcome {
   switch (result.decision) {
@@ -126,13 +127,53 @@ function outcomeFor(result: HookResult, permissionMode: string | undefined): Hoo
   }
 }
 
-function resolveAuditDir(policy: Policy, home: string): string {
-  const destination: unknown = policy.audit?.destination
-  if (destination === undefined || destination === null) return join(home, '.jamjet', 'audit')
-  if (typeof destination !== 'string' || destination === '') {
-    throw new Error('policy audit.destination must be a non-empty string')
+const MAX_POLICY_BYTES = 1024 * 1024
+
+/** Load and validate the policy, plus the checks this adapter needs on top of @jamjet/cloud's. */
+function readPolicy(path: string): Policy {
+  // A FIFO or device would block readFileSync until Claude Code's hook
+  // timeout, and a timed-out hook lets the tool run.
+  const st = statSync(path)
+  if (!st.isFile()) throw new Error('not a regular file')
+  if (st.size > MAX_POLICY_BYTES) throw new Error(`larger than ${MAX_POLICY_BYTES} bytes`)
+
+  const policy = loadPolicy(path)
+  policy.rules.forEach((rule, i) => {
+    if (rule.match === '') throw new Error(`rule[${i}].match is empty and can never match`)
+    // The hook matches the name after the mcp__<server>__ prefix, so a
+    // pattern that starts with the prefix never matches anything.
+    if (rule.match.startsWith('mcp__')) {
+      throw new Error(
+        `rule[${i}].match ${JSON.stringify(rule.match)} can never match: rules see MCP tools without the mcp__<server>__ prefix`,
+      )
+    }
+  })
+
+  const audit: unknown = policy.audit
+  if (audit !== undefined) {
+    if (!isObject(audit)) throw new Error('audit must be a mapping')
+    for (const key of Object.keys(audit)) {
+      if (key !== 'destination' && key !== 'rotate_daily') throw new Error(`audit has an unknown key: ${key}`)
+    }
+    if (audit.destination !== undefined && (typeof audit.destination !== 'string' || audit.destination === '')) {
+      throw new Error('audit.destination must be a non-empty string')
+    }
+    if (audit.rotate_daily !== undefined && typeof audit.rotate_daily !== 'boolean') {
+      throw new Error('audit.rotate_daily must be true or false')
+    }
   }
-  return expandHome(destination, home)
+  return policy
+}
+
+function resolveAuditDir(policy: Policy, home: string): string {
+  const destination = policy.audit?.destination
+  const dir = destination === undefined ? join(home, '.jamjet', 'audit') : expandHome(destination, home)
+  if (!isAbsolute(dir)) {
+    throw new Error(
+      `audit.destination ${JSON.stringify(destination)} is a relative path, which would resolve against the project directory; use an absolute path`,
+    )
+  }
+  return dir
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -181,8 +222,10 @@ function recordAudit(auditDir: string, input: HookInput, result: HookResult): vo
     executed,
   })
 
-  // Path B direct push to Cloud. The push itself is fire-and-forget and never
-  // changes the decision; a setup error here counts as an audit failure.
+  // Path B direct push to Cloud. A setup error here counts as an audit
+  // failure. The push is fire-and-forget, and bin.ts exits right after
+  // runHook returns, so today the request does not get sent; the local JSONL
+  // above is the audit record.
   const pusher = buildCloudPusher()
   if (pusher) {
     pushAuditEvent({

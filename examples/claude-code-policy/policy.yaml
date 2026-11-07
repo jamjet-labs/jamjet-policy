@@ -1,13 +1,14 @@
 version: 1
 
+# Rules see Claude Code's tool names (Bash, Edit, Write, WebFetch, ...) and,
+# for MCP tools, the name after the mcp__<server>__ prefix. First match wins.
 rules:
-  - { match: "*delete*",                  action: block }
-  - { match: "*drop*",                    action: block }
-  - { match: "shell.exec",                action: block }
-  - { match: "filesystem.write",          action: require_approval }
-  - { match: "payments.*",                action: require_approval }
-  - { match: "github.merge_pull_request", action: require_approval }
-  - { match: "slack.send_message",        action: audit }
+  - { match: "*delete*",           action: block }             # mcp__postgres__delete_rows, ...
+  - { match: "*drop*",             action: block }             # mcp__postgres__drop_table, ...
+  - { match: "merge_pull_request", action: require_approval }  # mcp__github__merge_pull_request
+  - { match: "Bash",               action: require_approval }
+  - { match: "Write",              action: require_approval }
+  - { match: "WebFetch",           action: audit }
 
 audit:
   destination: ~/.jamjet/audit

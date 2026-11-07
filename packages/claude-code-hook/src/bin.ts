@@ -49,6 +49,12 @@ function failClosed(err: unknown): void {
   finish({ exitCode: 2, stdout: '', stderr: `jamjet-hook: blocking tool call: ${message(err)}\n` })
 }
 
+// Only finish() writes to fd 1, with writeSync. Anything else printing to
+// stdout (a dependency's debug logging, for example yaml with LOG_TOKENS set)
+// would corrupt the JSON decision, and Claude Code reads stdout that is not
+// one JSON object as plain text, which lets the call go ahead without asking.
+process.stdout.write = process.stderr.write.bind(process.stderr) as typeof process.stdout.write
+
 process.on('uncaughtException', failClosed)
 process.on('unhandledRejection', failClosed)
 

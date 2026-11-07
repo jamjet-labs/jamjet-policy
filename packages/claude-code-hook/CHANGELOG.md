@@ -6,8 +6,10 @@ The hook now fails closed. Check your setup against the README before upgrading:
 
 ### Changed
 - Every error exits 2, which Claude Code treats as a block. 0.1.x exited 1 on a missing or invalid policy, an unknown action (`blok`), bad stdin, or an unwritable audit directory, and Claude Code runs the tool on exit 1.
-- `require_approval` no longer blocks in the modes that prompt you (`default`, `acceptEdits`, `plan`, `dontAsk`). The hook exits 0 and prints `permissionDecision: "ask"`, so Claude Code asks you before the call runs. In `auto`, `bypassPermissions`, an unknown mode, or input with no `permission_mode`, nobody would be asked, so it still blocks.
-- The policy file is `--policy <path>`, else `JAMJET_POLICY_FILE` (or `JAMJET_POLICY`), else `~/.jamjet/policy.yaml`. A `policy.yaml` in the working directory is no longer read. A leading `~/` in `--policy` is expanded.
+- `require_approval` no longer blocks. The hook exits 0 and prints `permissionDecision: "ask"`, which sends the call to Claude Code's permission prompt (`default`, `acceptEdits`, `plan`, `auto`, `dontAsk`). In `bypassPermissions`, an unknown mode, or input with no `permission_mode`, it still blocks.
+- The policy file is `--policy <path>`, else `JAMJET_POLICY_FILE` (or `JAMJET_POLICY`), else `~/.jamjet/policy.yaml`. A `policy.yaml` in the working directory is no longer read. A leading `~/` is expanded; after that the policy path, `HOME` and `audit.destination` must be absolute. The policy must be a regular file under 1 MiB.
+- Rules whose `match` is empty or starts with `mcp__` are refused: rules see MCP tools without that prefix, so they never matched. An `audit` block that is not a mapping, has unknown keys, or has a non-boolean `rotate_daily` is refused.
+- Only the decision is written to stdout. Anything else that prints there (yaml does with `LOG_TOKENS` set) goes to stderr, so the JSON decision can't be corrupted.
 - The decision is made before the audit write. If the write fails, an allowed or approval call is blocked; `--allow-audit-failure` lets it through with a warning. A block always stays a block.
 - Unknown flags, a repeated `--policy`, conflicting `JAMJET_POLICY_FILE` and `JAMJET_POLICY`, and stdin for any event other than `PreToolUse` are errors.
 - A failed import of the hook's own dependencies exits 2 instead of Node's default exit 1.
