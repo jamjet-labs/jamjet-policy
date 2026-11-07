@@ -67,7 +67,7 @@ async function readStdin(): Promise<string> {
 async function main(): Promise<void> {
   const { runHook } = await import('./run.js')
   const stdin = await readStdin()
-  finish(runHook({ argv: process.argv.slice(2), env: process.env, stdin, home: homedir() }))
+  finish(await runHook({ argv: process.argv.slice(2), env: process.env, stdin, home: homedir() }))
 }
 
 main().catch(failClosed)

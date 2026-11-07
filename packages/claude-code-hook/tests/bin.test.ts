@@ -9,13 +9,18 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { execFileSync, spawnSync } from 'node:child_process'
 import {
+  closeSync,
+  constants,
   copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -29,8 +34,8 @@ const BIN = join(DIST, 'bin.js')
 const BLOCK_DELETE = `version: 1
 rules:
   - { match: "*delete*", action: block }
-  - { match: "payments.*", action: require_approval }
-  - { match: "slack.send_message", action: audit }
+  - { match: "WebFetch", action: require_approval }
+  - { match: "WebSearch", action: audit }
 `
 const ALLOW_ALL = `version: 1
 rules:
@@ -78,6 +83,7 @@ function runHook(opts: {
   args?: string[]
   env?: Record<string, string>
   bin?: string
+  timeoutMs?: number
 }): RunResult {
   const r = spawnSync(process.execPath, [opts.bin ?? BIN, ...(opts.args ?? [])], {
     input: opts.stdin,
@@ -86,7 +92,7 @@ function runHook(opts: {
     // cloud tokens) leaks into the run.
     env: { PATH: process.env.PATH ?? '', HOME: home, ...(opts.env ?? {}) },
     encoding: 'utf-8',
-    timeout: 20_000,
+    timeout: opts.timeoutMs ?? 20_000,
   })
   return { code: r.status, stdout: r.stdout, stderr: r.stderr }
 }
@@ -107,7 +113,7 @@ function auditLines(dir: string): Array<Record<string, unknown>> {
 describe('decisions', () => {
   it('block exits 2 with the rule on stderr and nothing on stdout', () => {
     writeHomePolicy(BLOCK_DELETE)
-    const r = runHook({ stdin: toolCall('database.delete_all') })
+    const r = runHook({ stdin: toolCall('mcp__db__delete_all') })
     expect(r.code).toBe(2)
     expect(r.stderr).toContain('JamJet policy: BLOCKED (rule: *delete*)')
     expect(r.stdout).toBe('')
@@ -115,43 +121,43 @@ describe('decisions', () => {
 
   it('allow exits 0 with no output', () => {
     writeHomePolicy(BLOCK_DELETE)
-    const r = runHook({ stdin: toolCall('database.read') })
+    const r = runHook({ stdin: toolCall('Read') })
     expect(r.code).toBe(0)
     expect(r.stdout).toBe('')
   })
 
   it('audit exits 0 with no decision on stdout', () => {
     writeHomePolicy(BLOCK_DELETE)
-    const r = runHook({ stdin: toolCall('slack.send_message') })
+    const r = runHook({ stdin: toolCall('WebSearch') })
     expect(r.code).toBe(0)
     expect(r.stdout).toBe('')
   })
 
   it('require_approval exits 0 and asks Claude Code to prompt the user', () => {
     writeHomePolicy(BLOCK_DELETE)
-    const r = runHook({ stdin: toolCall('payments.refund') })
+    const r = runHook({ stdin: toolCall('WebFetch') })
     expect(r.code).toBe(0)
     expect(JSON.parse(r.stdout)).toEqual({
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'ask',
-        permissionDecisionReason: 'JamJet policy: approval required (rule: payments.*)',
+        permissionDecisionReason: 'JamJet policy: approval required (rule: WebFetch)',
       },
     })
   })
 
-  it.each(['acceptEdits', 'plan', 'auto', 'dontAsk'])('require_approval asks in %s mode', (mode) => {
+  it.each(['acceptEdits', 'auto', 'dontAsk'])('require_approval asks in %s mode', (mode) => {
     writeHomePolicy(BLOCK_DELETE)
-    const r = runHook({ stdin: toolCall('payments.refund', { permission_mode: mode }) })
+    const r = runHook({ stdin: toolCall('WebFetch', { permission_mode: mode }) })
     expect(r.code).toBe(0)
     expect(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision).toBe('ask')
   })
 
-  // bypassPermissions skips prompts, and nothing documents that a hook's
-  // "ask" survives it. Block instead, as for modes the hook does not know.
-  it.each(['bypassPermissions', 'someFutureMode'])('require_approval blocks in %s mode', (mode) => {
+  // Nothing documents that a hook's "ask" reaches a person in plan or
+  // bypassPermissions mode. Block there, as for modes the hook does not know.
+  it.each(['plan', 'bypassPermissions', 'someFutureMode'])('require_approval blocks in %s mode', (mode) => {
     writeHomePolicy(BLOCK_DELETE)
-    const r = runHook({ stdin: toolCall('payments.refund', { permission_mode: mode }) })
+    const r = runHook({ stdin: toolCall('WebFetch', { permission_mode: mode }) })
     expect(r.code).toBe(2)
     expect(r.stdout).toBe('')
     expect(r.stderr).toContain('approval required')
@@ -159,20 +165,25 @@ describe('decisions', () => {
 
   it('require_approval blocks when permission_mode is missing', () => {
     writeHomePolicy(BLOCK_DELETE)
-    const r = runHook({ stdin: toolCall('payments.refund', { permission_mode: undefined }) })
+    const r = runHook({ stdin: toolCall('WebFetch', { permission_mode: undefined }) })
     expect(r.code).toBe(2)
     expect(r.stdout).toBe('')
   })
 
-  it('writes the decision to the audit log before exiting', () => {
+  it('writes the decision and what the hook returned to the audit log', () => {
     writeHomePolicy(BLOCK_DELETE)
-    runHook({ stdin: toolCall('database.delete_all') })
-    runHook({ stdin: toolCall('payments.refund') })
+    runHook({ stdin: toolCall('mcp__db__delete_all', { mcp_server: { name: 'db', source: 'project' } }) })
+    runHook({ stdin: toolCall('WebFetch') })
+    runHook({ stdin: toolCall('WebFetch', { permission_mode: 'bypassPermissions' }) })
+    runHook({ stdin: toolCall('Read') })
     const events = auditLines(join(home, '.jamjet', 'audit'))
-    expect(events.map((e) => [e.tool, e.decision, e.executed])).toEqual([
-      ['database.delete_all', 'BLOCKED', false],
-      ['payments.refund', 'WAITING_FOR_APPROVAL', false],
+    expect(events.map((e) => [e.tool, e.server, e.decision, e.hook_decision, e.executed])).toEqual([
+      ['delete_all', 'db', 'BLOCKED', 'block', false],
+      ['WebFetch', null, 'WAITING_FOR_APPROVAL', 'ask', false],
+      ['WebFetch', null, 'WAITING_FOR_APPROVAL', 'block', false],
+      ['Read', null, 'ALLOWED', 'allow', true],
     ])
+    expect(events[0]!.server_source).toBe('project')
   })
 })
 
@@ -182,45 +193,45 @@ describe('fails closed on errors', () => {
 rules:
   - { match: "*delete*", action: blok }
 `)
-    const r = runHook({ stdin: toolCall('database.delete_all') })
+    const r = runHook({ stdin: toolCall('mcp__db__delete_all') })
     expect(r.code).toBe(2)
     expect(r.stderr).toContain('unknown action: blok')
   })
 
   it('blocks when there is no policy file', () => {
-    const r = runHook({ stdin: toolCall('database.read') })
+    const r = runHook({ stdin: toolCall('Read') })
     expect(r.code).toBe(2)
     expect(r.stderr).toMatch(/policy/i)
   })
 
   it('blocks when the policy is not valid YAML', () => {
     writeHomePolicy('version: 1\nrules: [ { match: "*", action: allow\n')
-    const r = runHook({ stdin: toolCall('database.read') })
+    const r = runHook({ stdin: toolCall('Read') })
     expect(r.code).toBe(2)
   })
 
   it('blocks when the policy version is unsupported', () => {
     writeHomePolicy('version: 2\nrules: []\n')
-    const r = runHook({ stdin: toolCall('database.read') })
+    const r = runHook({ stdin: toolCall('Read') })
     expect(r.code).toBe(2)
     expect(r.stderr).toContain('unsupported policy version')
   })
 
   it('blocks when --policy points at a missing file', () => {
     writeHomePolicy(ALLOW_ALL)
-    const r = runHook({ stdin: toolCall('database.read'), args: ['--policy', join(root, 'nope.yaml')] })
+    const r = runHook({ stdin: toolCall('Read'), args: ['--policy', join(root, 'nope.yaml')] })
     expect(r.code).toBe(2)
   })
 
   it('blocks when --policy has no value', () => {
     writeHomePolicy(ALLOW_ALL)
-    const r = runHook({ stdin: toolCall('database.read'), args: ['--policy'] })
+    const r = runHook({ stdin: toolCall('Read'), args: ['--policy'] })
     expect(r.code).toBe(2)
   })
 
   it('blocks on an unknown argument instead of ignoring it', () => {
     writeHomePolicy(ALLOW_ALL)
-    const r = runHook({ stdin: toolCall('database.read'), args: ['--polcy', join(root, 'x.yaml')] })
+    const r = runHook({ stdin: toolCall('Read'), args: ['--polcy', join(root, 'x.yaml')] })
     expect(r.code).toBe(2)
     expect(r.stderr).toContain('unknown argument: --polcy')
   })
@@ -239,7 +250,7 @@ rules:
 
   it('blocks when wired to an event other than PreToolUse', () => {
     writeHomePolicy(ALLOW_ALL)
-    const r = runHook({ stdin: toolCall('database.read', { hook_event_name: 'PostToolUse' }) })
+    const r = runHook({ stdin: toolCall('Read', { hook_event_name: 'PostToolUse' }) })
     expect(r.code).toBe(2)
   })
 
@@ -253,7 +264,7 @@ rules:
       if (f.endsWith('.js')) copyFileSync(join(DIST, f), join(broken, f))
     }
     writeFileSync(join(broken, 'package.json'), '{"type":"module"}')
-    const r = runHook({ stdin: toolCall('database.read'), bin: join(broken, 'bin.js') })
+    const r = runHook({ stdin: toolCall('Read'), bin: join(broken, 'bin.js') })
     expect(r.code).toBe(2)
   })
 })
@@ -268,35 +279,35 @@ describe('audit failures', () => {
 
   it('a block still blocks when the audit write fails', () => {
     writeHomePolicy(policyWithBrokenAudit('  - { match: "*delete*", action: block }\n'))
-    const r = runHook({ stdin: toolCall('database.delete_all') })
+    const r = runHook({ stdin: toolCall('mcp__db__delete_all') })
     expect(r.code).toBe(2)
     expect(r.stderr).toContain('BLOCKED (rule: *delete*)')
   })
 
   it('an allowed call is blocked when the audit write fails', () => {
     writeHomePolicy(policyWithBrokenAudit('  - { match: "*delete*", action: block }\n'))
-    const r = runHook({ stdin: toolCall('database.read') })
+    const r = runHook({ stdin: toolCall('Read') })
     expect(r.code).toBe(2)
     expect(r.stderr).toContain('audit')
   })
 
   it('an approval is blocked, not asked, when the audit write fails', () => {
-    writeHomePolicy(policyWithBrokenAudit('  - { match: "payments.*", action: require_approval }\n'))
-    const r = runHook({ stdin: toolCall('payments.refund') })
+    writeHomePolicy(policyWithBrokenAudit('  - { match: "WebFetch", action: require_approval }\n'))
+    const r = runHook({ stdin: toolCall('WebFetch') })
     expect(r.code).toBe(2)
     expect(r.stdout).toBe('')
   })
 
   it('--allow-audit-failure lets an allowed call through with a warning', () => {
     writeHomePolicy(policyWithBrokenAudit('  - { match: "*delete*", action: block }\n'))
-    const r = runHook({ stdin: toolCall('database.read'), args: ['--allow-audit-failure'] })
+    const r = runHook({ stdin: toolCall('Read'), args: ['--allow-audit-failure'] })
     expect(r.code).toBe(0)
     expect(r.stderr).toContain('audit')
   })
 
   it('--allow-audit-failure never turns a block into an allow', () => {
     writeHomePolicy(policyWithBrokenAudit('  - { match: "*delete*", action: block }\n'))
-    const r = runHook({ stdin: toolCall('database.delete_all'), args: ['--allow-audit-failure'] })
+    const r = runHook({ stdin: toolCall('mcp__db__delete_all'), args: ['--allow-audit-failure'] })
     expect(r.code).toBe(2)
     expect(r.stderr).toContain('BLOCKED (rule: *delete*)')
   })
@@ -306,14 +317,14 @@ describe('policy file selection', () => {
   it('ignores a policy.yaml in the working directory', () => {
     writeHomePolicy(BLOCK_DELETE)
     writeFileSync(join(project, 'policy.yaml'), ALLOW_ALL)
-    const r = runHook({ stdin: toolCall('database.delete_all') })
+    const r = runHook({ stdin: toolCall('mcp__db__delete_all') })
     expect(r.code).toBe(2)
     expect(r.stderr).toContain('BLOCKED (rule: *delete*)')
   })
 
   it('does not fall back to a working-directory policy when the home policy is missing', () => {
     writeFileSync(join(project, 'policy.yaml'), ALLOW_ALL)
-    const r = runHook({ stdin: toolCall('database.read') })
+    const r = runHook({ stdin: toolCall('Read') })
     expect(r.code).toBe(2)
   })
 
@@ -322,7 +333,7 @@ describe('policy file selection', () => {
     const flagged = join(root, 'flagged.yaml')
     writeFileSync(flagged, BLOCK_DELETE)
     const r = runHook({
-      stdin: toolCall('database.delete_all'),
+      stdin: toolCall('mcp__db__delete_all'),
       args: ['--policy', flagged],
       env: { JAMJET_POLICY_FILE: join(root, 'missing.yaml') },
     })
@@ -334,7 +345,7 @@ describe('policy file selection', () => {
     writeHomePolicy(ALLOW_ALL)
     const fromEnv = join(root, 'env.yaml')
     writeFileSync(fromEnv, BLOCK_DELETE)
-    const r = runHook({ stdin: toolCall('database.delete_all'), env: { JAMJET_POLICY_FILE: fromEnv } })
+    const r = runHook({ stdin: toolCall('mcp__db__delete_all'), env: { JAMJET_POLICY_FILE: fromEnv } })
     expect(r.code).toBe(2)
     expect(r.stderr).toContain('BLOCKED (rule: *delete*)')
   })
@@ -343,7 +354,7 @@ describe('policy file selection', () => {
     writeHomePolicy(ALLOW_ALL)
     const fromEnv = join(root, 'env.yaml')
     writeFileSync(fromEnv, BLOCK_DELETE)
-    const r = runHook({ stdin: toolCall('database.delete_all'), env: { JAMJET_POLICY: fromEnv } })
+    const r = runHook({ stdin: toolCall('mcp__db__delete_all'), env: { JAMJET_POLICY: fromEnv } })
     expect(r.code).toBe(2)
     expect(r.stderr).toContain('BLOCKED (rule: *delete*)')
   })
@@ -353,7 +364,7 @@ describe('policy file selection', () => {
     writeFileSync(join(root, 'a.yaml'), ALLOW_ALL)
     writeFileSync(join(root, 'b.yaml'), ALLOW_ALL)
     const r = runHook({
-      stdin: toolCall('database.read'),
+      stdin: toolCall('Read'),
       env: { JAMJET_POLICY_FILE: join(root, 'a.yaml'), JAMJET_POLICY: join(root, 'b.yaml') },
     })
     expect(r.code).toBe(2)
@@ -361,7 +372,7 @@ describe('policy file selection', () => {
 
   it('expands a leading ~ in --policy (exec-form hooks get no shell expansion)', () => {
     writeFileSync(join(home, 'custom.yaml'), BLOCK_DELETE)
-    const r = runHook({ stdin: toolCall('database.delete_all'), args: ['--policy', '~/custom.yaml'] })
+    const r = runHook({ stdin: toolCall('mcp__db__delete_all'), args: ['--policy', '~/custom.yaml'] })
     expect(r.code).toBe(2)
     expect(r.stderr).toContain('BLOCKED (rule: *delete*)')
   })
@@ -376,13 +387,13 @@ describe('nothing resolves against the project directory', () => {
   })
 
   it('refuses a relative --policy', () => {
-    const r = runHook({ stdin: toolCall('database.delete_all'), args: ['--policy', 'policy.yaml'] })
+    const r = runHook({ stdin: toolCall('mcp__db__delete_all'), args: ['--policy', 'policy.yaml'] })
     expect(r.code).toBe(2)
     expect(r.stderr).toContain('relative path')
   })
 
   it('refuses a relative JAMJET_POLICY_FILE', () => {
-    const r = runHook({ stdin: toolCall('database.delete_all'), env: { JAMJET_POLICY_FILE: 'policy.yaml' } })
+    const r = runHook({ stdin: toolCall('mcp__db__delete_all'), env: { JAMJET_POLICY_FILE: 'policy.yaml' } })
     expect(r.code).toBe(2)
     expect(r.stderr).toContain('relative path')
   })
@@ -392,7 +403,7 @@ describe('nothing resolves against the project directory', () => {
     // HOME check stands between it and being loaded.
     const elsewhere = join(root, 'repo-chosen-audit')
     writeFileSync(join(project, '.jamjet', 'policy.yaml'), `${ALLOW_ALL}audit:\n  destination: ${JSON.stringify(elsewhere)}\n`)
-    const r = runHook({ stdin: toolCall('database.delete_all'), env: { HOME: badHome } })
+    const r = runHook({ stdin: toolCall('mcp__db__delete_all'), env: { HOME: badHome } })
     expect(r.code).toBe(2)
     expect(r.stderr).toContain('home directory')
     expect(existsSync(elsewhere)).toBe(false)
@@ -400,7 +411,7 @@ describe('nothing resolves against the project directory', () => {
 
   it('refuses a relative audit.destination', () => {
     writeHomePolicy('version: 1\naudit:\n  destination: audit-logs\nrules: []\n')
-    const r = runHook({ stdin: toolCall('database.read') })
+    const r = runHook({ stdin: toolCall('Read') })
     expect(r.code).toBe(2)
     expect(existsSync(join(project, 'audit-logs'))).toBe(false)
   })
@@ -411,21 +422,66 @@ describe('policy checks beyond the shared schema', () => {
     writeHomePolicy(ALLOW_ALL)
     const fifo = join(root, 'policy.fifo')
     execFileSync('mkfifo', [fifo])
-    const r = runHook({ stdin: toolCall('database.read'), args: ['--policy', fifo] })
+    const r = runHook({ stdin: toolCall('Read'), args: ['--policy', fifo] })
     expect(r.code).toBe(2)
     expect(r.stderr).toContain('not a regular file')
   })
 
-  it('refuses a pattern that starts with mcp__, which can never match', () => {
-    writeHomePolicy('version: 1\nrules:\n  - { match: "mcp__github__*", action: block }\n')
-    const r = runHook({ stdin: toolCall('mcp__github__delete_repo') })
+  it.each([
+    ['Bash(rm *)', 'characters no Claude Code tool name contains'],
+    ['shell.exec', 'characters no Claude Code tool name contains'],
+    ['Bash ', 'characters no Claude Code tool name contains'],
+    ['bash', 'differs in case from the built-in tool Bash'],
+    ['x'.repeat(129), 'more than 128 characters'],
+  ])('refuses a pattern that can never match a Claude Code tool name: %j', (pattern, why) => {
+    writeHomePolicy(`version: 1\nrules:\n  - { match: ${JSON.stringify(pattern)}, action: block }\n`)
+    const r = runHook({ stdin: toolCall('Bash') })
     expect(r.code).toBe(2)
-    expect(r.stderr).toContain('can never match')
+    expect(r.stderr).toContain(why)
+  })
+
+  it.each([
+    ['default: block\n', 'unknown key: default'],
+    ['budgets: { max_tool_calls: 5 }\n', 'unknown key: budgets'],
+    ['defaults: {}\n', 'unknown key: defaults'],
+  ])('refuses an unknown top-level key: %j', (extra, why) => {
+    writeHomePolicy(`version: 1\n${extra}rules:\n  - { match: "Read", action: allow }\n`)
+    const r = runHook({ stdin: toolCall('Read') })
+    expect(r.code).toBe(2)
+    expect(r.stderr).toContain(why)
+  })
+
+  it.each([
+    ['command: "git *"', 'unknown key: command'],
+    ['approval_timeout: 30', 'unknown key: approval_timeout'],
+  ])('refuses an unknown rule key: %s', (extra, why) => {
+    writeHomePolicy(`version: 1\nrules:\n  - { match: "Bash", action: allow, ${extra} }\n`)
+    const r = runHook({ stdin: toolCall('Bash') })
+    expect(r.code).toBe(2)
+    expect(r.stderr).toContain(why)
+  })
+
+  it('refuses a tool_name Claude Code could not have sent', () => {
+    writeHomePolicy(ALLOW_ALL)
+    expect(runHook({ stdin: toolCall('database.read') }).code).toBe(2)
+    expect(runHook({ stdin: toolCall('Read\nBash') }).code).toBe(2)
+    expect(runHook({ stdin: toolCall('x'.repeat(129)) }).code).toBe(2)
+  })
+
+  it('a pathological pattern does not stall the hook', () => {
+    // As a regex this backtracks for many seconds on a 56-character name.
+    writeHomePolicy(`version: 1\nrules:\n  - { match: "${'*a'.repeat(8)}*b", action: block }\n`)
+    const started = Date.now()
+    const r = runHook({ stdin: toolCall('a'.repeat(56)), timeoutMs: 8000 })
+    expect(r.code).toBe(0)
+    expect(Date.now() - started).toBeLessThan(3000)
   })
 
   it('refuses an empty match', () => {
     writeHomePolicy('version: 1\nrules:\n  - { match: "", action: block }\n')
-    expect(runHook({ stdin: toolCall('database.read') }).code).toBe(2)
+    const r = runHook({ stdin: toolCall('Read') })
+    expect(r.code).toBe(2)
+    expect(r.stderr).toContain('it is empty')
   })
 
   it.each([
@@ -434,7 +490,7 @@ describe('policy checks beyond the shared schema', () => {
     ['a non-boolean rotate_daily', 'audit:\n  rotate_daily: "no"\n'],
   ])('refuses an audit block with %s', (_label, auditYaml) => {
     writeHomePolicy(`version: 1\n${auditYaml}rules: []\n`)
-    expect(runHook({ stdin: toolCall('database.read') }).code).toBe(2)
+    expect(runHook({ stdin: toolCall('Read') }).code).toBe(2)
   })
 })
 
@@ -442,7 +498,7 @@ describe('stdout carries only the decision', () => {
   it('keeps dependency logging off stdout so the ask stays one JSON object', () => {
     writeHomePolicy(BLOCK_DELETE)
     // yaml prints its token stream to stdout when LOG_TOKENS is set.
-    const r = runHook({ stdin: toolCall('payments.refund'), env: { LOG_TOKENS: '1' } })
+    const r = runHook({ stdin: toolCall('WebFetch'), env: { LOG_TOKENS: '1' } })
     expect(r.code).toBe(0)
     expect(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision).toBe('ask')
   })
@@ -469,5 +525,93 @@ describe('examples/claude-code-policy', () => {
       expect(r.code).toBe(0)
       expect(r.stdout).toBe('')
     }
+  })
+})
+
+describe('MCP tool names', () => {
+  it('an allow written for a built-in does not allow an MCP tool with the same name', () => {
+    writeHomePolicy('version: 1\nrules:\n  - { match: "Read", action: allow }\n  - { match: "*", action: block }\n')
+    expect(runHook({ stdin: toolCall('Read') }).code).toBe(0)
+    const r = runHook({ stdin: toolCall('mcp__evil__Read', { mcp_server: { name: 'evil', source: 'project' } }) })
+    expect(r.code).toBe(2)
+    expect(r.stderr).toContain('BLOCKED (rule: *)')
+  })
+
+  it('mcp__<server>__* patterns match that server by full name', () => {
+    writeHomePolicy('version: 1\nrules:\n  - { match: "mcp__github__*", action: allow }\n  - { match: "*", action: block }\n')
+    expect(runHook({ stdin: toolCall('mcp__github__create_issue') }).code).toBe(0)
+    expect(runHook({ stdin: toolCall('mcp__gitlab__create_issue') }).code).toBe(2)
+  })
+})
+
+describe('audit file safety', () => {
+  function today(offsetDays = 0): string {
+    return new Date(Date.now() + offsetDays * 86_400_000).toISOString().slice(0, 10)
+  }
+
+  // Put the given kind of non-file at today's (and tomorrow's, in case the
+  // date turns over mid-test) audit file path.
+  function plantAtAuditFile(make: (path: string) => void): void {
+    for (const day of [today(), today(1)]) {
+      const dir = join(home, '.jamjet', 'audit', day)
+      mkdirSync(dir, { recursive: true })
+      make(join(dir, 'claude-code-hook.jsonl'))
+    }
+  }
+
+  it('a FIFO at the audit file does not hold up a block', () => {
+    writeHomePolicy(BLOCK_DELETE)
+    plantAtAuditFile((p) => execFileSync('mkfifo', [p]))
+    const started = Date.now()
+    const r = runHook({ stdin: toolCall('mcp__db__delete_all'), timeoutMs: 8000 })
+    expect(r.code).toBe(2)
+    expect(r.stderr).toContain('BLOCKED (rule: *delete*)')
+    expect(Date.now() - started).toBeLessThan(1500)
+  })
+
+  it('a FIFO at the audit file blocks an allowed call instead of hanging', () => {
+    writeHomePolicy(BLOCK_DELETE)
+    plantAtAuditFile((p) => execFileSync('mkfifo', [p]))
+    const started = Date.now()
+    const r = runHook({ stdin: toolCall('Read'), timeoutMs: 8000 })
+    expect(r.code).toBe(2)
+    expect(r.stderr).toContain('audit')
+    expect(Date.now() - started).toBeLessThan(1500)
+  })
+
+  it('a FIFO with a reader attached is still refused (not a regular file)', () => {
+    writeHomePolicy(BLOCK_DELETE)
+    const fifos: string[] = []
+    plantAtAuditFile((p) => {
+      execFileSync('mkfifo', [p])
+      fifos.push(p)
+    })
+    // Hold the read end open so a non-blocking open for writing succeeds.
+    const fds = fifos.map((p) => openSync(p, constants.O_RDONLY | constants.O_NONBLOCK))
+    try {
+      const r = runHook({ stdin: toolCall('Read'), timeoutMs: 8000 })
+      expect(r.code).toBe(2)
+      expect(r.stderr).toContain('not a regular file')
+    } finally {
+      for (const fd of fds) closeSync(fd)
+    }
+  })
+
+  it('a symlinked audit file is refused and its target is left alone', () => {
+    writeHomePolicy(BLOCK_DELETE)
+    const victim = join(root, 'victim-rc')
+    writeFileSync(victim, 'original\n')
+    plantAtAuditFile((p) => symlinkSync(victim, p))
+    const r = runHook({ stdin: toolCall('Read') })
+    expect(r.code).toBe(2)
+    expect(readFileSync(victim, 'utf-8')).toBe('original\n')
+  })
+
+  it('creates audit directories 0700 and files 0600', () => {
+    writeHomePolicy(BLOCK_DELETE)
+    expect(runHook({ stdin: toolCall('Read') }).code).toBe(0)
+    const dayDir = join(home, '.jamjet', 'audit', readdirSync(join(home, '.jamjet', 'audit'))[0]!)
+    expect(statSync(dayDir).mode & 0o777).toBe(0o700)
+    expect(statSync(join(dayDir, 'claude-code-hook.jsonl')).mode & 0o777).toBe(0o600)
   })
 })

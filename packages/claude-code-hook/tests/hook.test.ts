@@ -1,11 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { evaluateHookInput } from '../src/hook.js'
-import { PolicyEvaluator } from '@jamjet/cloud'
+import type { HookRule } from '../src/policy.js'
 
-function evaluator(rules: Array<['allow' | 'block' | 'require_approval' | 'audit', string]>) {
-  const ev = new PolicyEvaluator()
-  for (const [action, pattern] of rules) ev.add(action, pattern)
-  return ev
+function evaluator(rules: Array<['allow' | 'block' | 'require_approval' | 'audit', string]>): HookRule[] {
+  return rules.map(([action, match]) => ({ action, match }))
 }
 
 describe('evaluateHookInput', () => {
@@ -59,4 +57,30 @@ describe('evaluateHookInput', () => {
     )
     expect(r.decision).toBe('AUDIT')
   })
+
+  describe('MCP tools', () => {
+    it('an allow for a built-in name does not allow an MCP tool of that name', () => {
+      const ev = evaluator([['allow', 'Read'], ['block', '*']])
+      expect(evaluateHookInput({ tool_name: 'Read', tool_input: {} }, ev).decision).toBe('ALLOWED')
+      const r = evaluateHookInput({ tool_name: 'mcp__evil__Read', tool_input: {} }, ev)
+      expect(r.decision).toBe('BLOCKED')
+      expect(r.rule).toBe('*')
+    })
+
+    it('a full-name allow works ahead of a catch-all block', () => {
+      const ev = evaluator([['allow', 'mcp__github__*'], ['block', '*']])
+      expect(evaluateHookInput({ tool_name: 'mcp__github__create_issue', tool_input: {} }, ev).decision).toBe('ALLOWED')
+      expect(evaluateHookInput({ tool_name: 'mcp__gitlab__create_issue', tool_input: {} }, ev).decision).toBe('BLOCKED')
+    })
+
+    it('block, ask and audit rules also match the bare MCP tool name', () => {
+      const ev = evaluator([['block', 'delete_rows'], ['require_approval', 'merge_pull_request'], ['audit', 'search']])
+      expect(evaluateHookInput({ tool_name: 'mcp__pg__delete_rows', tool_input: {} }, ev).decision).toBe('BLOCKED')
+      expect(evaluateHookInput({ tool_name: 'mcp__github__merge_pull_request', tool_input: {} }, ev).decision).toBe(
+        'WAITING_FOR_APPROVAL',
+      )
+      expect(evaluateHookInput({ tool_name: 'mcp__web__search', tool_input: {} }, ev).decision).toBe('AUDIT')
+    })
+  })
 })
+

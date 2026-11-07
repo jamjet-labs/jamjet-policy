@@ -1,58 +1,58 @@
 // src/hook.ts
-import type { PolicyEvaluator } from '@jamjet/cloud'
 import { parseClaudeToolName } from './claude-tool-name.js'
+import { globMatch } from './glob.js'
+import type { HookRule } from './policy.js'
 
 export interface HookInput {
   tool_name: string
   tool_input: Record<string, unknown>
   session_id?: string
   permission_mode?: string
+  mcp_server?: { name?: string; source?: string }
 }
 
+export type Decision = 'ALLOWED' | 'BLOCKED' | 'WAITING_FOR_APPROVAL' | 'AUDIT'
+export type RuleKind = 'allow' | 'block' | 'require_approval' | 'audit'
+
 export interface HookResult {
-  decision: 'ALLOWED' | 'BLOCKED' | 'WAITING_FOR_APPROVAL' | 'AUDIT'
+  decision: Decision
   rule: string | null
-  rule_kind: 'allow' | 'block' | 'require_approval' | 'audit' | null
+  rule_kind: RuleKind | null
   effective_tool: string
   server: string | null
 }
 
-export function evaluateHookInput(input: HookInput, policy: PolicyEvaluator): HookResult {
-  const parsed = parseClaudeToolName(input.tool_name)
-  const d = policy.evaluate(parsed.effective)
+const DECISION: Record<RuleKind, Decision> = {
+  allow: 'ALLOWED',
+  block: 'BLOCKED',
+  require_approval: 'WAITING_FOR_APPROVAL',
+  audit: 'AUDIT',
+}
 
-  if (d.blocked) {
-    return {
-      decision: 'BLOCKED',
-      rule: d.pattern,
-      rule_kind: 'block',
-      effective_tool: parsed.effective,
-      server: parsed.server,
+/**
+ * Rules are checked in order and the first match wins. Every rule matches
+ * against the full tool name. For an MCP tool (`mcp__<server>__<tool>`), a
+ * rule that blocks, asks or audits also matches the bare tool name, so
+ * `*delete*` and `merge_pull_request` work whatever the server is called. An
+ * allow rule only ever matches the full name: an MCP tool is allowed by
+ * `mcp__github__*` or `mcp__*__query`, never by an allow written for a
+ * built-in such as `Read`.
+ */
+export function evaluateHookInput(input: HookInput, rules: readonly HookRule[]): HookResult {
+  const parsed = parseClaudeToolName(input.tool_name)
+  const isMcp = parsed.server !== null
+  for (const r of rules) {
+    const matches =
+      globMatch(r.match, parsed.raw) || (isMcp && r.action !== 'allow' && globMatch(r.match, parsed.effective))
+    if (matches) {
+      return {
+        decision: DECISION[r.action],
+        rule: r.match,
+        rule_kind: r.action,
+        effective_tool: parsed.effective,
+        server: parsed.server,
+      }
     }
   }
-  if (d.policyKind === 'require_approval') {
-    return {
-      decision: 'WAITING_FOR_APPROVAL',
-      rule: d.pattern,
-      rule_kind: 'require_approval',
-      effective_tool: parsed.effective,
-      server: parsed.server,
-    }
-  }
-  if (d.policyKind === 'audit') {
-    return {
-      decision: 'AUDIT',
-      rule: d.pattern,
-      rule_kind: 'audit',
-      effective_tool: parsed.effective,
-      server: parsed.server,
-    }
-  }
-  return {
-    decision: 'ALLOWED',
-    rule: d.pattern ?? null,
-    rule_kind: d.pattern ? 'allow' : null,
-    effective_tool: parsed.effective,
-    server: parsed.server,
-  }
+  return { decision: 'ALLOWED', rule: null, rule_kind: null, effective_tool: parsed.effective, server: parsed.server }
 }

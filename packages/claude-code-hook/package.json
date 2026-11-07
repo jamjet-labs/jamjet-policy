@@ -8,7 +8,7 @@
   },
   "files": ["dist", "README.md"],
   "scripts": {
-    "build": "tsup src/bin.ts --format esm --dts --shims --clean",
+    "build": "tsup src/bin.ts src/audit-writer.ts --format esm --dts --shims --clean",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "conformance": "vitest run conformance"

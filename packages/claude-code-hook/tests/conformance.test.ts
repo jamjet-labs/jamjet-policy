@@ -4,7 +4,6 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse } from 'yaml'
 import { evaluateHookInput } from '../src/hook.js'
-import { PolicyEvaluator } from '@jamjet/cloud'
 
 interface ConformanceCase {
   id: string
@@ -25,10 +24,7 @@ const suite = parse(readFileSync(suitePath, 'utf-8')) as { cases: ConformanceCas
 describe('claude-code-hook conformance', () => {
   for (const c of suite.cases) {
     it(c.id, () => {
-      const ev = new PolicyEvaluator()
-      for (const r of c.policy.rules) {
-        ev.add(r.action, r.match)
-      }
+      const ev = c.policy.rules.map((r) => ({ match: r.match, action: r.action }))
       // The hook adapter strips mcp__server__ prefix — perfect for the
       // `requires_mcp_prefix_strip: true` case, but harmless for others.
       const result = evaluateHookInput({ tool_name: c.tool, tool_input: {} }, ev)
