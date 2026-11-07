@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Build, typecheck, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm/action-setup with no `version:` reads "packageManager" from the
+      # root package.json, same as the release workflows.
+      - uses: pnpm/action-setup@v4
+
+      # Node 22 matches every release-*.yml workflow.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      # pnpm-lock.yaml is the only lockfile. A second one (npm, yarn, bun)
+      # drifts silently the first time someone runs `pnpm add`.
+      - name: Single lockfile
+        run: |
+          extra="$(git ls-files | grep -E '(^|/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|bun\.lockb?)$' || true)"
+          if [ -n "$extra" ]; then
+            echo "Found lockfiles other than pnpm-lock.yaml:"
+            echo "$extra"
+            exit 1
+          fi
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Build before typecheck and test: cli and ext-authz import
+      # @jamjet/cedar and @jamjet/mcp-threat through workspace links whose
+      # types and entry points live in dist/, and integration tests spawn
+      # dist/bin.js.
+      - name: Build
+        run: pnpm build
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
