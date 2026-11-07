@@ -16,7 +16,11 @@ jobs:
       run:
         working-directory: packages/openai-guardrail
     steps:
+      # Full history, so the main gate below can check the tagged commit
+      # against origin/main.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # pnpm/action-setup with no `version:` reads "packageManager" from the
       # root package.json. Avoids ERR_PNPM_BAD_PM_VERSION.
@@ -40,21 +44,34 @@ jobs:
             exit 1
           fi
 
-      # npm publish ships the workspace: protocol verbatim and no consumer can
-      # resolve it. Pin workspace siblings to a published version first. Node
-      # sets the exit code itself, so an error reading package.json also fails.
-      - name: Gate against workspace protocol in dependencies
+      # A version tag can point at any commit, including one on a branch that
+      # was never reviewed or merged. Publish only commits that are on main.
+      - name: Gate tag commit on main
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "$GITHUB_SHA is not on main; tag a commit that has been merged to main"
+            exit 1
+          fi
+
+      # npm publish ships workspace:, file:, link:, catalog: and git or URL
+      # specifiers verbatim, and consumers can't resolve them. Accept only
+      # plain semver ranges and dist-tags; pin workspace siblings to a
+      # published version first. Node sets the exit code itself, so an error
+      # reading package.json also fails.
+      - name: Gate dependencies on published versions
         run: |
           node -e '
             const p = require("./package.json")
+            const published = /^[0-9A-Za-z.+*^~<>=| -]+$/
             const bad = []
             for (const field of ["dependencies", "optionalDependencies", "peerDependencies"]) {
               for (const [name, range] of Object.entries(p[field] ?? {})) {
-                if (String(range).includes("workspace:")) bad.push(`${field}.${name}: ${range}`)
+                if (typeof range !== "string" || !published.test(range)) bad.push(`${field}.${name}: ${JSON.stringify(range)}`)
               }
             }
             if (bad.length > 0) {
-              console.log("workspace: ranges would ship unresolvable; pin to a published version first:")
+              console.log("these ranges would not resolve for consumers; pin to a published version first:")
               for (const b of bad) console.log("  " + b)
               process.exit(1)
             }
