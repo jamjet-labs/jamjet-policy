@@ -15,4 +15,4 @@ Drop this `policy.yaml` into your `~/.jamjet/` and reference it from `~/.claude/
 }
 ```
 
-Then run Claude Code. Any tool whose name contains `delete` or `drop` is blocked, which covers MCP tools such as `mcp__postgres__delete_rows`. `Bash`, `Write` and GitHub's `merge_pull_request` ask you first. `WebFetch` calls are logged and allowed. Rules match the tool name only, not its arguments.
+Then run Claude Code. Any tool whose name contains `delete` or `drop` is blocked, which covers MCP tools such as `mcp__postgres__delete_rows`. The three tools that run shell commands (`Bash`, `PowerShell` and `Monitor`), `Write`, and GitHub's `merge_pull_request` ask you first; in `plan` or `bypassPermissions` mode they are blocked instead. `WebFetch` calls are logged and allowed. Rules match the tool name only, not its arguments.

@@ -1,12 +1,18 @@
 version: 1
 
-# Rules see Claude Code's tool names (Bash, Edit, Write, WebFetch, ...) and,
-# for MCP tools, the name after the mcp__<server>__ prefix. First match wins.
+# Rules match Claude Code's tool names (Bash, Edit, Write, WebFetch, ...) and
+# the full MCP name mcp__<server>__<tool>. Block, ask and audit rules also
+# match an MCP tool's bare name, so "*delete*" covers every server. Allow
+# rules only match full names. First match wins.
+#
+# Shell commands run through three tools: Bash, PowerShell and Monitor.
 rules:
   - { match: "*delete*",           action: block }             # mcp__postgres__delete_rows, ...
   - { match: "*drop*",             action: block }             # mcp__postgres__drop_table, ...
   - { match: "merge_pull_request", action: require_approval }  # mcp__github__merge_pull_request
   - { match: "Bash",               action: require_approval }
+  - { match: "PowerShell",         action: require_approval }
+  - { match: "Monitor",            action: require_approval }
   - { match: "Write",              action: require_approval }
   - { match: "WebFetch",           action: audit }
 

@@ -71,8 +71,13 @@ export function deadPatternReason(pattern: string): string | null {
     return 'has characters no Claude Code tool name contains (names use only A-Z a-z 0-9 _ -, plus * and ? as wildcards)'
   }
   if (pattern.replace(/\*/g, '').length > 128) return 'needs more than 128 characters, the longest tool name'
-  const builtin = BUILTIN_BY_LOWER.get(pattern.toLowerCase())
-  if (builtin !== undefined && builtin !== pattern) return `differs in case from the built-in tool ${builtin} (matching is case-sensitive)`
+  // A literal start that spells a built-in name in the wrong case (`bash`,
+  // `bash*`, `webFetch?`) is a typo for the built-in.
+  const literal = pattern.split(/[*?]/, 1)[0]!
+  const builtin = BUILTIN_BY_LOWER.get(literal.toLowerCase())
+  if (builtin !== undefined && builtin !== literal) {
+    return `starts with ${literal}, which differs in case from the built-in tool ${builtin} (matching is case-sensitive; for MCP tools write mcp__*__${pattern})`
+  }
   return null
 }
 

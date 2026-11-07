@@ -82,5 +82,47 @@ describe('evaluateHookInput', () => {
       expect(evaluateHookInput({ tool_name: 'mcp__web__search', tool_input: {} }, ev).decision).toBe('AUDIT')
     })
   })
-})
+  describe('MCP server names with __ or edge underscores', () => {
+    const ev = evaluator([['block', 'delete_rows'], ['require_approval', 'merge_pull_request']])
+    const cases: Array<[string, string, string]> = [
+      ['mcp__pg___delete_rows', 'pg_', 'BLOCKED'],
+      ['mcp___pg__delete_rows', '_pg', 'BLOCKED'],
+      ['mcp__a__b__delete_rows', 'a__b', 'BLOCKED'],
+      ['mcp__gh__x__merge_pull_request', 'gh__x', 'WAITING_FOR_APPROVAL'],
+    ]
+    it.each(cases)('%s without mcp_server: every split is checked', (tool, _server, decision) => {
+      expect(evaluateHookInput({ tool_name: tool, tool_input: {} }, ev).decision).toBe(decision)
+    })
+    it.each(cases)('%s with mcp_server.name %s: exact strip', (tool, server, decision) => {
+      const r = evaluateHookInput({ tool_name: tool, tool_input: {}, mcp_server: { name: server } }, ev)
+      expect(r.decision).toBe(decision)
+      expect(r.server).toBe(server)
+    })
 
+    it('with mcp_server.name the split is exact: x__merge_pull_request on server gh is a different tool', () => {
+      const r = evaluateHookInput(
+        { tool_name: 'mcp__gh__x__merge_pull_request', tool_input: {}, mcp_server: { name: 'gh' } },
+        ev,
+      )
+      expect(r.decision).toBe('ALLOWED')
+      expect(r.effective_tool).toBe('x__merge_pull_request')
+    })
+
+    it('normalises the server name the way Claude Code does before stripping', () => {
+      const r = evaluateHookInput(
+        { tool_name: 'mcp__gh_x__a__merge_pull_request', tool_input: {}, mcp_server: { name: 'gh.x' } },
+        ev,
+      )
+      expect(r.decision).toBe('ALLOWED')
+      expect(r.effective_tool).toBe('a__merge_pull_request')
+    })
+
+    it('falls back to every split when mcp_server.name does not match the tool name', () => {
+      const r = evaluateHookInput(
+        { tool_name: 'mcp__a__b__delete_rows', tool_input: {}, mcp_server: { name: 'other' } },
+        ev,
+      )
+      expect(r.decision).toBe('BLOCKED')
+    })
+  })
+})

@@ -81,7 +81,7 @@ Errors inside the hook include an unreadable or invalid policy, an unknown actio
 
 ## Writing rules
 
-Rules are checked in order and the first match wins. `*` matches any run of characters and `?` matches one; everything else is literal and case-sensitive. Rules match the tool name, not its arguments, so `Bash` covers every shell command.
+Rules are checked in order and the first match wins. `*` matches any run of characters and `?` matches one; everything else is literal and case-sensitive. Rules match the tool name, not its arguments. Shell commands can run through three built-in tools, `Bash`, `PowerShell` and `Monitor`, so a rule meant for shell commands needs all three.
 
 The hook is strict about the policy, because an ignored line reads as a control that isn't there:
 
@@ -108,7 +108,11 @@ rules:
   - { match: "*", action: block }
 ```
 
-So a server that names a tool `Read` can't use the allow written for the built-in `Read`. The server name comes from your MCP configuration, and a project's `.mcp.json` can name its server anything, so an allow by server name trusts that name. The audit log records the server's `source` (for example `user`, `project` or `plugin`) when Claude Code sends it.
+So a server that names a tool `Read` can't use the allow written for the built-in `Read`.
+
+Server names can contain `__` and can start or end with `_`, so `mcp__a__b__delete_rows` can be read more than one way. When Claude Code sends the server's name (the `mcp_server` field, Claude Code 2.1.274 and later), the hook strips exactly `mcp__<name>__`. Without it, block, ask and audit rules are checked against every possible bare name.
+
+An allow pattern matches the full name as text, so `mcp__github__*` also covers a server named `github__x`, whose tools are `mcp__github__x__<tool>`. The server name comes from your MCP configuration, and a project's `.mcp.json` can name its server anything, so an allow by server name trusts that name. The audit log records the server's `source` (for example `user`, `project` or `plugin`) when Claude Code sends it.
 
 ## Which policy file
 

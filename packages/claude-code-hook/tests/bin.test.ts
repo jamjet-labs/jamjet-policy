@@ -433,6 +433,8 @@ describe('policy checks beyond the shared schema', () => {
     ['Bash ', 'characters no Claude Code tool name contains'],
     ['bash', 'differs in case from the built-in tool Bash'],
     ['x'.repeat(129), 'more than 128 characters'],
+    ['bash*', 'differs in case from the built-in tool Bash'],
+    ['webFetch?', 'differs in case from the built-in tool WebFetch'],
   ])('refuses a pattern that can never match a Claude Code tool name: %j', (pattern, why) => {
     writeHomePolicy(`version: 1\nrules:\n  - { match: ${JSON.stringify(pattern)}, action: block }\n`)
     const r = runHook({ stdin: toolCall('Bash') })
@@ -509,6 +511,8 @@ describe('examples/claude-code-policy', () => {
     ['mcp__postgres__delete_rows', 'block'],
     ['mcp__postgres__drop_table', 'block'],
     ['Bash', 'ask'],
+    ['PowerShell', 'ask'],
+    ['Monitor', 'ask'],
     ['Write', 'ask'],
     ['mcp__github__merge_pull_request', 'ask'],
     ['WebFetch', 'allow'],
@@ -613,5 +617,51 @@ describe('audit file safety', () => {
     const dayDir = join(home, '.jamjet', 'audit', readdirSync(join(home, '.jamjet', 'audit'))[0]!)
     expect(statSync(dayDir).mode & 0o777).toBe(0o700)
     expect(statSync(join(dayDir, 'claude-code-hook.jsonl')).mode & 0o777).toBe(0o600)
+  })
+})
+
+describe('shell tools in the example policy', () => {
+  // Shell commands run through Bash, PowerShell and Monitor. In
+  // bypassPermissions an approval rule blocks, so all three must be covered.
+  it.each(['Bash', 'PowerShell', 'Monitor'])('%s is blocked in bypassPermissions mode', (tool) => {
+    const r = runHook({ stdin: toolCall(tool, { permission_mode: 'bypassPermissions' }), args: ['--policy', EXAMPLE_POLICY] })
+    expect(r.code).toBe(2)
+    expect(r.stderr).toContain('approval required')
+  })
+})
+
+describe('MCP server names with __ or edge underscores', () => {
+  const POLICY = 'version: 1\nrules:\n  - { match: "delete_rows", action: block }\n  - { match: "merge_pull_request", action: require_approval }\n'
+  const cases: Array<[string, string, 'block' | 'ask']> = [
+    ['mcp__pg___delete_rows', 'pg_', 'block'],
+    ['mcp___pg__delete_rows', '_pg', 'block'],
+    ['mcp__a__b__delete_rows', 'a__b', 'block'],
+    ['mcp__gh__x__merge_pull_request', 'gh__x', 'ask'],
+  ]
+  function expectOutcome(r: RunResult, expected: 'block' | 'ask'): void {
+    if (expected === 'block') {
+      expect(r.code).toBe(2)
+      expect(r.stderr).toContain('BLOCKED (rule:')
+    } else {
+      expect(r.code).toBe(0)
+      expect(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision).toBe('ask')
+    }
+  }
+
+  it.each(cases)('%s without mcp_server -> %s', (tool, _server, expected) => {
+    writeHomePolicy(POLICY)
+    expectOutcome(runHook({ stdin: toolCall(tool) }), expected)
+  })
+
+  it.each(cases)('%s with mcp_server.name %j -> %s', (tool, server, expected) => {
+    writeHomePolicy(POLICY)
+    expectOutcome(runHook({ stdin: toolCall(tool, { mcp_server: { name: server, source: 'project' } }) }), expected)
+  })
+})
+
+describe('accepted patterns', () => {
+  it.each(['*delete*', 'list*', 'mcp__*__read*', 'Read*', 'Bash'])('%j is accepted', (pattern) => {
+    writeHomePolicy(`version: 1\nrules:\n  - { match: ${JSON.stringify(pattern)}, action: audit }\n`)
+    expect(runHook({ stdin: toolCall('Glob') }).code).toBe(0)
   })
 })
